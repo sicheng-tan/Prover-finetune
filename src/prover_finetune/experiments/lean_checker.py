@@ -1,26 +1,67 @@
+import json
 import subprocess
 from pathlib import Path
+
+import yaml
 
 
 class LeanChecker:
     def __init__(self, lean_cfg: dict):
-        self.project_dir = Path(lean_cfg.get("project_dir", ".lean_runner"))
-        self.lean_version = lean_cfg["lean_version"]
-        self.mathlib_ref = lean_cfg["mathlib_ref"]
-        self.timeout_sec = int(lean_cfg.get("timeout_sec", 30))
-        self.lake_exe = lean_cfg.get("lake_exe", "lake")
-        self.header_imports = lean_cfg.get("header_imports", ["Mathlib", "Aesop"])
-        self.header_set_options = lean_cfg.get("header_set_options", ["maxHeartbeats 0"])
-        self.header_open_scopes = lean_cfg.get(
+        merged_cfg = dict(lean_cfg)
+        project_cfg_path = merged_cfg.get("project_config_path")
+        if project_cfg_path:
+            with open(project_cfg_path, "r", encoding="utf-8") as f:
+                file_cfg = yaml.safe_load(f) or {}
+            if not isinstance(file_cfg, dict):
+                raise ValueError("Lean project config must be a YAML mapping.")
+            # File config is the base; explicit lean section values can override it.
+            merged_cfg = {**file_cfg, **merged_cfg}
+
+        self.project_dir = Path(merged_cfg.get("project_dir", ".lean_runner"))
+        self.lean_version = merged_cfg["lean_version"]
+        self.mathlib_ref = merged_cfg["mathlib_ref"]
+        self.package_name = merged_cfg.get("package_name", "runner")
+        self.extra_dependencies = merged_cfg.get("extra_dependencies", [])
+        self.timeout_sec = int(merged_cfg.get("timeout_sec", 30))
+        self.lake_exe = merged_cfg.get("lake_exe", "lake")
+        self.header_imports = merged_cfg.get("header_imports", ["Mathlib", "Aesop"])
+        self.header_set_options = merged_cfg.get("header_set_options", ["maxHeartbeats 0"])
+        self.header_open_scopes = merged_cfg.get(
             "header_open_scopes", ["BigOperators", "Real", "Nat", "Topology", "Rat"]
         )
-        self.cache_get_timeout_sec = int(lean_cfg.get("cache_get_timeout_sec", 300))
+        self.cache_get_timeout_sec = int(merged_cfg.get("cache_get_timeout_sec", 300))
 
     def _version_stamp_path(self) -> Path:
         return self.project_dir / ".version_stamp"
 
+    def _render_lakefile(self) -> str:
+        base = (
+            "import Lake\n"
+            "open Lake DSL\n\n"
+            f"package {self.package_name}\n\n"
+            "require mathlib from git\n"
+            '  "https://github.com/leanprover-community/mathlib4.git" @ '
+            f'"{self.mathlib_ref}"\n'
+        )
+        extra_lines = []
+        for dep in self.extra_dependencies:
+            if not isinstance(dep, dict):
+                raise ValueError("Each item in extra_dependencies must be a mapping.")
+            name = dep.get("name")
+            git = dep.get("git")
+            ref = dep.get("ref")
+            if not name or not git or not ref:
+                raise ValueError("Each extra dependency needs name, git, and ref.")
+            extra_lines.append(f'\nrequire {name} from git\n  "{git}" @ "{ref}"\n')
+        return base + "".join(extra_lines)
+
     def _target_stamp(self) -> str:
-        return f"lean={self.lean_version}\nmathlib={self.mathlib_ref}\n"
+        stamp = {
+            "lean_version": self.lean_version,
+            "lakefile": self._render_lakefile(),
+            "lake_exe": self.lake_exe,
+        }
+        return json.dumps(stamp, ensure_ascii=True, sort_keys=True, indent=2)
 
     def _version_is_already_configured(self) -> bool:
         stamp_path = self._version_stamp_path()
@@ -35,24 +76,14 @@ class LeanChecker:
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
         if self._version_is_already_configured():
-            # Version matches local setup; skip update/switch workflow.
+            # Config matches local setup; skip rebuild workflow.
             return
 
         toolchain = self.project_dir / "lean-toolchain"
         toolchain.write_text(f"{self.lean_version}\n", encoding="utf-8")
 
         lakefile = self.project_dir / "lakefile.lean"
-        lakefile.write_text(
-            (
-                "import Lake\n"
-                "open Lake DSL\n\n"
-                "package runner\n\n"
-                "require mathlib from git\n"
-                '  "https://github.com/leanprover-community/mathlib4.git" @ '
-                f'"{self.mathlib_ref}"\n'
-            ),
-            encoding="utf-8",
-        )
+        lakefile.write_text(self._render_lakefile(), encoding="utf-8")
 
         (self.project_dir / "Main.lean").write_text("-- placeholder\n", encoding="utf-8")
         subprocess.run([self.lake_exe, "update"], cwd=self.project_dir, check=True)

@@ -25,19 +25,4 @@ minif2f:
   split_file: data/processed/valid.txt
 
 lean:
-  project_dir: .lean_runner
-  lean_version: leanprover/lean4:v4.27.0
-  mathlib_ref: v4.27.0
-  timeout_sec: 30
-  lake_exe: lake
-  header_imports:
-    - Mathlib
-    - Aesop
-  header_set_options:
-    - maxHeartbeats 0
-  header_open_scopes:
-    - BigOperators
-    - Real
-    - Nat
-    - Topology
-    - Rat
+  project_config_path: configs/lean_project.example.yaml
