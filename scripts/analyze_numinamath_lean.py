@@ -34,7 +34,7 @@ def _bucket_label(token_count: int) -> str:
     for lo, hi in buckets:
         if lo <= token_count <= hi:
             return f"{lo}-{hi}"
-    return ">4096"
+    return ">8192"
 
 
 def main() -> None:
