@@ -27,6 +27,7 @@ configs/
 scripts/
   extract_minif2f_lean_to_json.py   # 解析 Valid.lean/Test.lean -> json
   analyze_numinamath_lean.py        # NuminaMath-LEAN 数据统计
+  filter_numinamath_lean.py         # NuminaMath-LEAN 条件筛选导出
 
 src/prover_finetune/
   experiments/
@@ -137,9 +138,9 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
   - `lora`（`r`、`alpha`、`dropout`、`target_modules`）
 - `data`
   - `source_type`: `huggingface` 或 `jsonl`
-  - Hugging Face: `dataset_name`、`dataset_config`、`train_split`、`eval_split`
+  - Hugging Face: `dataset_name`、`dataset_config`、`train_split`（`eval_split` 可选）
   - JSONL: `train_path`、`eval_path`
-  - 文本模板：`template`（支持 `{prompt}`、`{completion}` 和原始字段）
+  - 文本模板：`template`（可直接使用原始字段，如 `{formal_ground_truth}`）
   - `max_seq_length`
 - `training`
   - `output_dir`、batch size、学习率、warmup、scheduler、save/eval steps 等
@@ -156,7 +157,7 @@ python -m src.prover_finetune.finetune.train_qlora --config configs/finetune.exa
 
 ---
 
-## 数据分析脚本（可选）
+## NuminaMath-LEAN 数据分析与筛选
 
 项目提供 `scripts/analyze_numinamath_lean.py` 用于统计 `AI-MO/NuminaMath-LEAN` 数据集的 token 分布：
 
@@ -169,9 +170,30 @@ python scripts/analyze_numinamath_lean.py \
 
 该脚本会输出：
 
-- 数据过滤后样本数（默认过滤 `author=human` 且 `ground_truth_type=compete`）
-- `formal_ground_truth` token 长度分桶分布
+- 数据过滤后样本数（默认过滤 `author=human` 且 `ground_truth_type=complete`）
+- `formal_ground_truth` token 长度分桶分布（`0-256` 到 `>8192`）
 - 最长样本 token 数与索引
+- 最短样本 token 数、索引，以及对应 `problem` 与 `formal_ground_truth`
+
+还提供筛选导出脚本 `scripts/filter_numinamath_lean.py`，用于生成训练数据：
+
+```bash
+python scripts/filter_numinamath_lean.py \
+  --dataset-name AI-MO/NuminaMath-LEAN \
+  --split train \
+  --tokenizer-name gpt2 \
+  --max-formal-tokens 4096
+```
+
+默认筛选条件：
+
+- `author == human`
+- `ground_truth_type == complete`
+- `formal_ground_truth` token 数 `<= 4096`
+
+默认输出文件：
+
+- `data/processed/numinamath_lean_filtered_train.jsonl`
 
 ---
 
