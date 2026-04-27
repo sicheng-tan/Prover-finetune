@@ -66,7 +66,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--ground-truth-type-value",
-        default="compete",
+        default="complete",
         help="ground_truth_type value used for filtering.",
     )
     parser.add_argument(
@@ -127,7 +127,11 @@ def main() -> None:
     print(f"dataset={args.dataset_name}")
     print(f"split={args.split}")
     print(f"total_samples={len(dataset)}")
-    print("filter=author=human AND ground_truth_type=compete")
+    print(
+        "filter="
+        f"{args.author_field}=human AND "
+        f"{args.ground_truth_type_field}={args.ground_truth_type_value}"
+    )
     print(f"tokenizer_mode={tokenizer_mode}")
     print(f"filtered_samples={filtered_count}")
     print(f"formal_ground_truth_max_tokens={max_formal_tokens}")
