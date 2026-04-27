@@ -1,0 +1,43 @@
+experiment:
+  name: minif2f-baseline
+  split: valid
+  max_samples: 20
+  output_dir: outputs/experiments/minif2f-baseline
+
+model:
+  name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+  adapter_path: null
+  device_map: auto
+  max_new_tokens: 256
+  temperature: 0.2
+  top_p: 0.9
+  do_sample: false
+
+minif2f:
+  source_type: local_json
+  # Supported:
+  # - local_json: provide json_path (processed miniF2F json array)
+  # - local_jsonl: provide path with fields {id, statement, header?}
+  # - local_lean_dir: provide root_dir and split_file
+  json_path: data/minif2f/processed/valid.json
+  jsonl_path: data/minif2f/valid.jsonl
+  root_dir: data/minif2f
+  split_file: data/minif2f/valid.txt
+
+lean:
+  project_dir: .lean_runner
+  lean_version: leanprover/lean4:v4.27.0
+  mathlib_ref: v4.27.0
+  timeout_sec: 30
+  lake_exe: lake
+  header_imports:
+    - Mathlib
+    - Aesop
+  header_set_options:
+    - maxHeartbeats 0
+  header_open_scopes:
+    - BigOperators
+    - Real
+    - Nat
+    - Topology
+    - Rat

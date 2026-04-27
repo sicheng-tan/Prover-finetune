@@ -1,0 +1,94 @@
+import subprocess
+from pathlib import Path
+
+
+class LeanChecker:
+    def __init__(self, lean_cfg: dict):
+        self.project_dir = Path(lean_cfg.get("project_dir", ".lean_runner"))
+        self.lean_version = lean_cfg["lean_version"]
+        self.mathlib_ref = lean_cfg["mathlib_ref"]
+        self.timeout_sec = int(lean_cfg.get("timeout_sec", 30))
+        self.lake_exe = lean_cfg.get("lake_exe", "lake")
+        self.header_imports = lean_cfg.get("header_imports", ["Mathlib", "Aesop"])
+        self.header_set_options = lean_cfg.get("header_set_options", ["maxHeartbeats 0"])
+        self.header_open_scopes = lean_cfg.get(
+            "header_open_scopes", ["BigOperators", "Real", "Nat", "Topology", "Rat"]
+        )
+        self.cache_get_timeout_sec = int(lean_cfg.get("cache_get_timeout_sec", 300))
+
+    def _version_stamp_path(self) -> Path:
+        return self.project_dir / ".version_stamp"
+
+    def _target_stamp(self) -> str:
+        return f"lean={self.lean_version}\nmathlib={self.mathlib_ref}\n"
+
+    def _version_is_already_configured(self) -> bool:
+        stamp_path = self._version_stamp_path()
+        if not stamp_path.exists():
+            return False
+        return stamp_path.read_text(encoding="utf-8") == self._target_stamp()
+
+    def _write_version_stamp(self) -> None:
+        self._version_stamp_path().write_text(self._target_stamp(), encoding="utf-8")
+
+    def setup_project(self) -> None:
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+
+        if self._version_is_already_configured():
+            # Version matches local setup; skip update/switch workflow.
+            return
+
+        toolchain = self.project_dir / "lean-toolchain"
+        toolchain.write_text(f"{self.lean_version}\n", encoding="utf-8")
+
+        lakefile = self.project_dir / "lakefile.lean"
+        lakefile.write_text(
+            (
+                "import Lake\n"
+                "open Lake DSL\n\n"
+                "package runner\n\n"
+                "require mathlib from git\n"
+                '  "https://github.com/leanprover-community/mathlib4.git" @ '
+                f'"{self.mathlib_ref}"\n'
+            ),
+            encoding="utf-8",
+        )
+
+        (self.project_dir / "Main.lean").write_text("-- placeholder\n", encoding="utf-8")
+        subprocess.run([self.lake_exe, "update"], cwd=self.project_dir, check=True)
+        # Pull prebuilt cache after dependency update; faster than full local rebuild.
+        subprocess.run(
+            [self.lake_exe, "exe", "cache", "get"],
+            cwd=self.project_dir,
+            check=True,
+            timeout=self.cache_get_timeout_sec,
+        )
+        self._write_version_stamp()
+
+    def check_proof(self, theorem_block: str, proof: str) -> tuple[bool, str]:
+        test_file = self.project_dir / "Main.lean"
+        imports_block = "\n".join(f"import {name}" for name in self.header_imports)
+        options_block = "\n".join(f"set_option {opt}" for opt in self.header_set_options)
+        open_block = (
+            f"open {' '.join(self.header_open_scopes)}" if self.header_open_scopes else ""
+        )
+        content = (
+            f"{imports_block}\n\n"
+            f"{options_block}\n\n"
+            f"{open_block}\n\n"
+            f"{theorem_block}\n\n"
+            f"{proof}\n"
+        )
+        test_file.write_text(content, encoding="utf-8")
+
+        proc = subprocess.run(
+            [self.lake_exe, "env", "lean", "Main.lean"],
+            cwd=self.project_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=self.timeout_sec,
+        )
+        ok = proc.returncode == 0
+        return ok, proc.stdout
+
