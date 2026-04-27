@@ -46,8 +46,8 @@ src/prover_finetune/
 ### 1) Python 环境
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+conda create -n prover-finetune python=3.10 -y
+conda activate prover-finetune
 pip install -r requirements.txt
 ```
 

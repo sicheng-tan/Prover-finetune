@@ -10,16 +10,10 @@ model:
     target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 data:
-  # Supported source_type:
-  # - jsonl: use train_path/eval_path
-  # - huggingface: use dataset_name/train_split/eval_split
   source_type: huggingface
   dataset_name: AI-MO/NuminaMath-LEAN
   dataset_config: null
   train_split: train
-  eval_split: validation
-  train_path: data/train.jsonl
-  eval_path: data/eval.jsonl
   template: "{formal_ground_truth}"
   max_seq_length: 2048
 
@@ -27,12 +21,10 @@ training:
   output_dir: outputs/lora-qwen2.5-math-7b-bf16
   num_train_epochs: 2
   per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
   gradient_accumulation_steps: 16
   learning_rate: 8.0e-5
   logging_steps: 20
   save_steps: 200
-  eval_steps: 200
   warmup_ratio: 0.03
   lr_scheduler_type: cosine
   bf16: true
