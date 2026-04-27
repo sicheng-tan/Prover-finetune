@@ -19,10 +19,10 @@ minif2f:
   # - local_json: provide json_path (processed miniF2F json array)
   # - local_jsonl: provide path with fields {id, statement, header?}
   # - local_lean_dir: provide root_dir and split_file
-  json_path: data/minif2f/processed/valid.json
-  jsonl_path: data/minif2f/valid.jsonl
-  root_dir: data/minif2f
-  split_file: data/minif2f/valid.txt
+  json_path: data/processed/valid.json
+  jsonl_path: data/processed/valid.jsonl
+  root_dir: data/
+  split_file: data/processed/valid.txt
 
 lean:
   project_dir: .lean_runner

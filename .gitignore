@@ -1,4 +1,7 @@
-# Large miniF2F artifacts
-data/minif2f/miniF2F-main/
-data/minif2f/google-deepmind-miniF2F.zip
-data/minif2f/openai-miniF2F.zip
+# Ignore all data by default
+data/**
+
+# Keep processed outputs versioned
+!data/
+!data/processed/
+!data/processed/**

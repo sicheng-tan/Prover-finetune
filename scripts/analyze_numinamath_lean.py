@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 from typing import Any
 
 from datasets import load_dataset
@@ -46,14 +47,34 @@ def main() -> None:
         default="formal_ground_truth",
         help="Field name for formal ground truth text.",
     )
+    parser.add_argument(
+        "--dataset-cache-dir",
+        default="data/hf_cache/datasets",
+        help="Local cache directory for downloaded Hugging Face datasets.",
+    )
+    parser.add_argument(
+        "--tokenizer-cache-dir",
+        default="data/hf_cache/tokenizers",
+        help="Local cache directory for downloaded tokenizers.",
+    )
     args = parser.parse_args()
+
+    dataset_cache_dir = Path(args.dataset_cache_dir)
+    tokenizer_cache_dir = Path(args.tokenizer_cache_dir)
+    dataset_cache_dir.mkdir(parents=True, exist_ok=True)
+    tokenizer_cache_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = load_dataset(
         path=args.dataset_name,
         name=args.dataset_config,
         split=args.split,
+        cache_dir=str(dataset_cache_dir),
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.tokenizer,
+        use_fast=True,
+        cache_dir=str(tokenizer_cache_dir),
+    )
 
     human_count = 0
     max_formal_tokens = 0

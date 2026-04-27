@@ -76,7 +76,7 @@ def parse_lean_theorems(path: Path) -> list[dict]:
 
 def main() -> None:
     root = Path("data/minif2f/miniF2F-main/MiniF2F")
-    out_dir = Path("data/minif2f/processed")
+    out_dir = Path("data/processed")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     valid = parse_lean_theorems(root / "Valid.lean")
