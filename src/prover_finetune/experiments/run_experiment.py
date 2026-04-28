@@ -55,8 +55,6 @@ def _attach_file_logger(logger: logging.Logger, output_dir: Path) -> None:
 
 def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
     def _extract_last_fence(text: str, language: str) -> str | None:
-        # Be permissive: some tokenizers/loggers may render newline markers as visible chars
-        # (e.g. "Ċ"), so we cannot require a literal newline right after the fence header.
         pattern = rf"```{language}\b[\s\S]*?```"
         matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
         if not matches:
@@ -64,8 +62,7 @@ def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
         block = matches[-1].group(0)
         block = re.sub(rf"^```{language}\b", "", block, flags=re.IGNORECASE).strip()
         block = re.sub(r"```$", "", block).strip()
-        # Trim common visible newline markers only at fence boundary.
-        return block.lstrip("Ċ").strip()
+        return block.strip()
 
     lean4_code = _extract_last_fence(generation, "lean4")
     if lean4_code:

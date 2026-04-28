@@ -14,7 +14,7 @@ extra_dependencies: []
 #     ref: v4.27.0
 
 # Runtime options
-timeout_sec: 30
+timeout_sec: 120
 lake_exe: lake
 cache_get_timeout_sec: 300
 
