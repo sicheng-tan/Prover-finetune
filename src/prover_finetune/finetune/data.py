@@ -79,7 +79,7 @@ def _format_deepseek_prover_v2_example(row: dict[str, Any], data_cfg: dict[str, 
     assistant_completion = (
         f"{plan_title}\n\n"
         f"{plan_lines}\n\n"
-        "Lean 4 code:\n"
+        "#### Lean 4 code:\n"
         "```lean4\n"
         f"{formal_proof}\n"
         "```"
