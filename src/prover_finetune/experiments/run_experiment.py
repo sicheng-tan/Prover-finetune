@@ -3,8 +3,11 @@ import copy
 import concurrent.futures
 import json
 import logging
+import os
+import queue
 import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -236,16 +239,24 @@ def _process_one_problem(
 def _run_worker(
     worker_idx: int,
     gpu_id: int,
-    shard: list[tuple[int, dict]],
+    task_queue: "queue.Queue[tuple[int, dict]]",
     total_rows: int,
     pass_k: int,
     model_cfg: dict,
     lean_cfg: dict,
     problem_log_dir: Path,
+    logger: logging.Logger,
+    load_state: dict,
+    progress_state: dict,
 ) -> list[tuple[int, dict, int]]:
     worker_model_cfg = copy.deepcopy(model_cfg)
     worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
     prover = build_prover_generator(worker_model_cfg)
+    with load_state["lock"]:
+        load_state["loaded"] += 1
+        logger.info("GPU %s model loaded.", gpu_id)
+        if load_state["loaded"] == load_state["total"]:
+            logger.info("All worker models have finished loading.")
 
     worker_lean_cfg = copy.deepcopy(lean_cfg)
     base_project_dir = worker_lean_cfg.get("project_dir", ".lean_runner")
@@ -254,12 +265,29 @@ def _run_worker(
     checker.setup_project()
 
     out: list[tuple[int, dict, int]] = []
-    for row_idx, row in shard:
+    while True:
+        try:
+            row_idx, row = task_queue.get_nowait()
+        except queue.Empty:
+            break
         result, ok_int, logs = _process_one_problem(row_idx, total_rows, row, pass_k, prover, checker)
         log_name_raw = row.get("name") or row.get("id") or f"sample_{row_idx}"
         safe_name = str(log_name_raw).replace("/", "_")
         (problem_log_dir / f"{safe_name}.log").write_text("\n".join(logs) + "\n", encoding="utf-8")
         out.append((row_idx, result, ok_int))
+        with progress_state["lock"]:
+            progress_state["done"] += 1
+            done = progress_state["done"]
+            total = progress_state["total"]
+            status = "PASS" if ok_int else "FAIL"
+            logger.info(
+                "[progress] %d/%d | gpu=%s | sample=%s | %s",
+                done,
+                total,
+                gpu_id,
+                result["id"],
+                status,
+            )
     return out
 
 
@@ -281,6 +309,20 @@ def main() -> None:
     output_dir = Path(exp_cfg.get("output_dir", "outputs/experiments/default"))
     output_dir.mkdir(parents=True, exist_ok=True)
     _attach_file_logger(logger, output_dir)
+    # Suppress model loading/download progress bars in multi-thread mode.
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    try:
+        from huggingface_hub.utils import disable_progress_bars
+
+        disable_progress_bars()
+    except Exception:
+        pass
+    try:
+        from transformers.utils import logging as hf_logging
+
+        hf_logging.disable_progress_bar()
+    except Exception:
+        pass
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
     pass_k = int(exp_cfg.get("pass_k", 1))
@@ -304,23 +346,34 @@ def main() -> None:
     worker_count = min(len(gpu_ids), total_rows)
     gpu_ids = gpu_ids[:worker_count]
     indexed_rows = list(enumerate(dataset, start=1))
-    shards: list[list[tuple[int, dict]]] = [[] for _ in range(worker_count)]
-    for i, item in enumerate(indexed_rows):
-        shards[i % worker_count].append(item)
+    task_queue: "queue.Queue[tuple[int, dict]]" = queue.Queue()
+    for item in indexed_rows:
+        task_queue.put(item)
 
     packed_results: list[tuple[int, dict, int]] = []
+    load_state = {"loaded": 0, "total": worker_count, "lock": threading.Lock()}
+    progress_state = {"done": 0, "total": total_rows, "lock": threading.Lock()}
+    logger.info(
+        "Starting dynamic parallel run: total_samples=%d, workers=%d, gpus=%s",
+        total_rows,
+        worker_count,
+        gpu_ids,
+    )
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [
             executor.submit(
                 _run_worker,
                 worker_idx=i,
                 gpu_id=gpu_ids[i],
-                shard=shards[i],
+                task_queue=task_queue,
                 total_rows=total_rows,
                 pass_k=pass_k,
                 model_cfg=model_cfg,
                 lean_cfg=lean_cfg,
                 problem_log_dir=problem_log_dir,
+                logger=logger,
+                load_state=load_state,
+                progress_state=progress_state,
             )
             for i in range(worker_count)
         ]
