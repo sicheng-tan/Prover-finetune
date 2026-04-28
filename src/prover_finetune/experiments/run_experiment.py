@@ -105,8 +105,6 @@ def _discover_gpu_ids(exp_cfg: dict, model_cfg: dict, logger: logging.Logger) ->
             f"experiment.gpu_ids has invalid entries {invalid}; visible device count is {visible}."
         )
     logger.info("Using %d parallel GPU workers on configured devices: %s", len(gpu_ids), gpu_ids)
-    if model_cfg.get("gpu_device") is not None:
-        logger.info("Overriding model.gpu_device per worker for parallel execution.")
     return gpu_ids
 
 
@@ -246,7 +244,6 @@ def _run_worker(
     problem_log_dir: Path,
 ) -> list[tuple[int, dict, int]]:
     worker_model_cfg = copy.deepcopy(model_cfg)
-    worker_model_cfg["gpu_device"] = gpu_id
     worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
     prover = build_prover_generator(worker_model_cfg)
 
