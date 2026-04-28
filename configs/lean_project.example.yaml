@@ -17,7 +17,7 @@ mathlib_setup:
 use_lean_interact: true
 use_auto_server: true
 memory_limit_mb: 16384
-lean_interact_verbose: false
+lean_interact_verbose: true
 
 # Header used in Main.lean for proof checking.
 header_imports:
