@@ -148,20 +148,32 @@ class DeepSeekProverV2Generator(ProverGenerator):
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
         chat = [{"role": "user", "content": prompt}]
-        inputs = self.tokenizer.apply_chat_template(
+        chat_inputs = self.tokenizer.apply_chat_template(
             chat,
             tokenize=True,
             add_generation_prompt=True,
             return_tensors="pt",
-        ).to(self.model.device)
-        input_len = inputs.shape[-1]
+        )
+
+        if hasattr(chat_inputs, "to"):
+            chat_inputs = chat_inputs.to(self.model.device)
+
+        if isinstance(chat_inputs, torch.Tensor):
+            model_inputs = {"input_ids": chat_inputs}
+            input_len = int(chat_inputs.shape[-1])
+        else:
+            model_inputs = dict(chat_inputs)
+            input_ids = model_inputs.get("input_ids")
+            if input_ids is None:
+                raise ValueError("Chat template output does not contain input_ids.")
+            input_len = int(input_ids.shape[-1])
 
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         with _generation_timeout(self.inference_timeout_sec):
             with torch.no_grad():
                 out = self.model.generate(
-                    inputs,
+                    **model_inputs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=use_sampling,
                     temperature=self.temperature,
