@@ -4,7 +4,6 @@ import threading
 from contextlib import contextmanager
 
 import torch
-from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DEEPSEEK_PROVER_V2_PROMPT = """Complete the following Lean 4 code:
@@ -72,11 +71,7 @@ class ProverGenerator:
             device_map=device_map,
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
         )
-        adapter_path = model_cfg.get("adapter_path")
-        if adapter_path:
-            self.model = PeftModel.from_pretrained(base_model, adapter_path)
-        else:
-            self.model = base_model
+        self.model = base_model
         self.model.eval()
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
         self.temperature = model_cfg.get("temperature", 0.2)
@@ -153,11 +148,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             trust_remote_code=True,
         )
-        adapter_path = model_cfg.get("adapter_path")
-        if adapter_path:
-            self.model = PeftModel.from_pretrained(base_model, adapter_path)
-        else:
-            self.model = base_model
+        self.model = base_model
         self.model.eval()
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
         self.temperature = model_cfg.get("temperature", 0.2)
