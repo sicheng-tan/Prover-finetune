@@ -35,6 +35,20 @@ def build_mathlib(target_dir: Path, skip_cache_get: bool, skip_build: bool) -> N
         run(["lake", "build"], cwd=target_dir)
 
 
+def normalize_lean_version(version: str) -> str:
+    v = version.strip()
+    if v.startswith("leanprover/lean4:"):
+        return v
+    if v.startswith("v"):
+        return f"leanprover/lean4:{v}"
+    return f"leanprover/lean4:v{v}"
+
+
+def set_local_lean_default(version: str) -> None:
+    toolchain = normalize_lean_version(version)
+    run(["elan", "default", toolchain])
+
+
 def _resolve_target_dir(cfg: dict, config_path: Path) -> tuple[Path, str, str]:
     setup_cfg = cfg.get("mathlib_setup", {})
     if not isinstance(setup_cfg, dict):
@@ -85,6 +99,11 @@ def main() -> None:
         action="store_true",
         help="Write resolved target directory back into config as mathlib_path.",
     )
+    parser.add_argument(
+        "--set-elan-default",
+        action="store_true",
+        help="Also run `elan default <lean_version>` from config.",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
@@ -94,6 +113,8 @@ def main() -> None:
     git_clone_or_fetch(repo_url, target_dir)
     checkout_ref(target_dir, ref)
     build_mathlib(target_dir, skip_cache_get=args.skip_cache_get, skip_build=args.skip_build)
+    if args.set_elan_default:
+        set_local_lean_default(str(cfg.get("lean_version", ref)))
 
     if args.sync_mathlib_path:
         rel = target_dir.relative_to(config_path.parent.parent)
@@ -102,6 +123,8 @@ def main() -> None:
 
     print(f"[ok] mathlib4 ready at: {target_dir}")
     print(f"[ok] checked out ref: {ref}")
+    if args.set_elan_default:
+        print(f"[ok] set elan default to: {normalize_lean_version(str(cfg.get('lean_version', ref)))}")
     if args.sync_mathlib_path:
         print(f"[ok] updated mathlib_path in config: {cfg['mathlib_path']}")
     else:

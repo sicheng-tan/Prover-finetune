@@ -56,13 +56,36 @@ class LeanChecker:
         open_block = (
             f"open {' '.join(self.header_open_scopes)}" if self.header_open_scopes else ""
         )
-        return (
+        header_block = (
             f"{imports_block}\n\n"
             f"{options_block}\n\n"
             f"{open_block}\n\n"
-            f"{theorem_block}\n\n"
-            f"{proof}\n"
         )
+        proof_stripped = proof.strip()
+        theorem_stripped = theorem_block.strip()
+
+        # Detect whether generated code already contains import header.
+        has_import_header = bool(re.search(r"^\s*import\s+\S+", proof_stripped, flags=re.MULTILINE))
+        has_import_mathlib = bool(
+            re.search(r"^\s*import\s+Mathlib\b", proof_stripped, flags=re.MULTILINE)
+        )
+        # If extracted model output already contains a full declaration
+        # (theorem/lemma/def), do not prepend theorem_block again.
+        has_full_decl = bool(re.match(r"^(theorem|lemma|def)\b", proof_stripped))
+        if has_full_decl:
+            # Full declaration from model:
+            # - If there is no import header, prepend full configured header.
+            # - If there are imports but Mathlib is missing, prepend import Mathlib.
+            if not has_import_header:
+                body = f"{header_block}{proof_stripped}"
+            elif not has_import_mathlib:
+                body = f"import Mathlib\n\n{proof_stripped}"
+            else:
+                body = proof_stripped
+            return f"{body}\n"
+
+        body = f"{theorem_stripped}\n\n{proof_stripped}"
+        return f"{header_block}{body}\n"
 
     def _init_lean_interact_server(self) -> bool:
         if not self.use_lean_interact:
