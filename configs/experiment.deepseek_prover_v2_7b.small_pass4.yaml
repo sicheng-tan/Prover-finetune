@@ -4,7 +4,7 @@ experiment:
   max_samples: 2
   pass_k: 4
   verbose_logging: true
-  output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-smoke-pass4
+  output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-small-pass4
 
 model:
   name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
