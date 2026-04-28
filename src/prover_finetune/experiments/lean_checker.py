@@ -25,8 +25,8 @@ class LeanChecker:
         self.extra_dependencies = merged_cfg.get("extra_dependencies", [])
         self.timeout_sec = int(merged_cfg.get("timeout_sec", 30))
         self.lake_exe = merged_cfg.get("lake_exe", "lake")
-        self.header_imports = merged_cfg.get("header_imports", ["Mathlib", "Aesop"])
-        self.header_set_options = merged_cfg.get("header_set_options", ["maxHeartbeats 0"])
+        self.header_imports = merged_cfg.get("header_imports", ["Mathlib"])
+        self.header_set_options = merged_cfg.get("header_set_options", ["maxHeartbeats 200000"])
         self.header_open_scopes = merged_cfg.get(
             "header_open_scopes", ["BigOperators", "Real", "Nat", "Topology", "Rat"]
         )

@@ -21,9 +21,8 @@ cache_get_timeout_sec: 300
 # Header used in Main.lean for proof checking.
 header_imports:
   - Mathlib
-  - Aesop
 header_set_options:
-  - maxHeartbeats 0
+  - maxHeartbeats 200000
 header_open_scopes:
   - BigOperators
   - Real
