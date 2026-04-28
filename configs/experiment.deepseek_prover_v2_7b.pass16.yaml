@@ -3,6 +3,7 @@ experiment:
   split: test
   max_samples: null
   pass_k: 16
+  verbose_logging: true
   output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-pass16
 
 model:

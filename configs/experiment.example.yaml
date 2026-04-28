@@ -3,6 +3,7 @@ experiment:
   split: valid
   max_samples: null
   pass_k: 1
+  verbose_logging: true
   output_dir: outputs/experiments/minif2f-baseline
 
 model:

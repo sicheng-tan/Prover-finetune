@@ -97,6 +97,7 @@ python scripts/extract_minif2f_lean_to_json.py
   - `split`: `valid` / `test`
   - `max_samples`: 调试时可先设小值
   - `pass_k`: 每题最多尝试的候选 proof 数（用于 pass@k）
+  - `verbose_logging`: 是否输出详细中间日志（完整生成、Lean 检查输出、重试进度）
   - `output_dir`: 实验输出目录
 - `model`
   - `name_or_path`: 基座模型

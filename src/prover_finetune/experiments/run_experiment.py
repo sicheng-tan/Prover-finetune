@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from tqdm import tqdm
@@ -21,6 +22,18 @@ def _extract_theorem_block(problem: dict) -> str:
     raise ValueError("miniF2F sample must contain 'definition', 'statement', or 'theorem' field.")
 
 
+def _setup_logger(verbose_logging: bool) -> logging.Logger:
+    logger = logging.getLogger("prover_finetune.experiments")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO if verbose_logging else logging.WARNING)
+    logger.propagate = False
+    return logger
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Path to experiment yaml config")
@@ -31,6 +44,8 @@ def main() -> None:
     model_cfg = cfg.section("model")
     minif2f_cfg = cfg.section("minif2f")
     lean_cfg = cfg.section("lean")
+    verbose_logging = bool(exp_cfg.get("verbose_logging", True))
+    logger = _setup_logger(verbose_logging)
 
     split = exp_cfg.get("split", "valid")
     max_samples = exp_cfg.get("max_samples")
@@ -41,12 +56,18 @@ def main() -> None:
     prover = build_prover_generator(model_cfg)
     checker = LeanChecker(lean_cfg)
     checker.setup_project()
+    logger.info("Lean project setup completed.")
 
     pass_k = int(exp_cfg.get("pass_k", 1))
     results = []
     num_pass = 0
-    for row in tqdm(dataset, desc="miniF2F eval"):
+    total_rows = len(dataset)
+    for row_idx, row in enumerate(tqdm(dataset, desc="miniF2F eval"), start=1):
         theorem_block = _extract_theorem_block(row)
+        sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
+        logger.info("=" * 80)
+        logger.info("Sample %d/%d | id=%s", row_idx, total_rows, sample_id)
+        logger.info("Theorem block:\n%s", theorem_block)
         pred_proofs = prover.generate_proofs(theorem_block, num_samples=pass_k)
 
         ok = False
@@ -54,7 +75,24 @@ def main() -> None:
         first_prediction = pred_proofs[0] if pred_proofs else ""
         candidates = []
         for idx, pred_proof in enumerate(pred_proofs, start=1):
+            retries_used = idx - 1
+            retries_remaining = max(0, pass_k - idx)
+            logger.info(
+                "Sample id=%s | attempt %d/%d | retries_used=%d | retries_remaining=%d",
+                sample_id,
+                idx,
+                pass_k,
+                retries_used,
+                retries_remaining,
+            )
+            logger.info("Full LLM generation (attempt %d):\n%s", idx, pred_proof)
             cur_ok, cur_log = checker.check_proof(theorem_block, pred_proof)
+            logger.info(
+                "Lean check result (attempt %d): ok=%s\nLean output:\n%s",
+                idx,
+                cur_ok,
+                cur_log,
+            )
             candidates.append(
                 {
                     "sample_idx": idx,
@@ -66,15 +104,29 @@ def main() -> None:
             if cur_ok:
                 ok = True
                 lean_log = cur_log
+                logger.info(
+                    "Sample id=%s solved at attempt %d/%d (retries_used=%d).",
+                    sample_id,
+                    idx,
+                    pass_k,
+                    retries_used,
+                )
                 break
             # Keep the first failure log for easier debugging.
             if idx == 1:
                 lean_log = cur_log
 
         num_pass += int(ok)
+        if not ok:
+            logger.info(
+                "Sample id=%s failed after %d attempts (retries_used=%d).",
+                sample_id,
+                pass_k,
+                max(0, pass_k - 1),
+            )
         results.append(
             {
-                "id": row.get("id", row.get("name")),
+                "id": sample_id,
                 "ok": ok,
                 "theorem": theorem_block,
                 "comment": row.get("comment"),
@@ -88,6 +140,7 @@ def main() -> None:
     total = len(results)
     pass_at_k = (num_pass / total) if total > 0 else 0.0
     summary = {"total": total, "pass": num_pass, f"pass@{pass_k}": pass_at_k}
+    logger.info("Experiment finished. Summary: %s", json.dumps(summary, ensure_ascii=False))
 
     (output_dir / "results.json").write_text(
         json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=2),

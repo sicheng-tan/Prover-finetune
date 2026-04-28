@@ -112,14 +112,23 @@ class LeanChecker:
         )
         test_file.write_text(content, encoding="utf-8")
 
-        proc = subprocess.run(
-            [self.lake_exe, "env", "lean", "Main.lean"],
-            cwd=self.project_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=self.timeout_sec,
-        )
-        ok = proc.returncode == 0
-        return ok, proc.stdout
+        try:
+            proc = subprocess.run(
+                [self.lake_exe, "env", "lean", "Main.lean"],
+                cwd=self.project_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=self.timeout_sec,
+            )
+            ok = proc.returncode == 0
+            return ok, proc.stdout
+        except subprocess.TimeoutExpired as exc:
+            timeout_log = (
+                f"Lean check timeout after {self.timeout_sec}s.\n"
+                f"Command: {' '.join(exc.cmd) if exc.cmd else f'{self.lake_exe} env lean Main.lean'}\n"
+            )
+            if exc.stdout:
+                timeout_log += f"\nPartial output:\n{exc.stdout}"
+            return False, timeout_log
 
