@@ -16,12 +16,17 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def git_clone_or_fetch(repo_url: str, target_dir: Path) -> None:
-    if (target_dir / ".git").exists():
-        run(["git", "fetch", "--tags", "origin"], cwd=target_dir)
-    else:
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        run(["git", "clone", repo_url, str(target_dir)])
+def git_clone_if_missing(repo_url: str, target_dir: Path) -> None:
+    if target_dir.exists():
+        if not (target_dir / ".git").exists():
+            raise ValueError(
+                f"Target directory exists but is not a git repo: {target_dir}. "
+                "Please remove it or choose another target directory."
+            )
+        print(f"[skip] target directory already exists, skip download: {target_dir}")
+        return
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    run(["git", "clone", repo_url, str(target_dir)])
 
 
 def checkout_ref(target_dir: Path, ref: str) -> None:
@@ -110,7 +115,7 @@ def main() -> None:
     cfg = _load_yaml(config_path)
     target_dir, repo_url, ref = _resolve_target_dir(cfg, config_path)
 
-    git_clone_or_fetch(repo_url, target_dir)
+    git_clone_if_missing(repo_url, target_dir)
     checkout_ref(target_dir, ref)
     build_mathlib(target_dir, skip_cache_get=args.skip_cache_get, skip_build=args.skip_build)
     if args.set_elan_default:
