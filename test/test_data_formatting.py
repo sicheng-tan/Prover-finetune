@@ -91,7 +91,7 @@ class DataFormattingTests:
         )
 
         assert formatted.startswith("Complete the following Lean 4 code:")
-        assert "Proof plan:\n" in formatted
+        assert "### Proof Plan" in formatted
         assert "Lean 4 code:\n```lean4\n" in formatted
         assert "theorem" in formatted
         assert "by" in formatted
@@ -129,7 +129,7 @@ class DataFormattingTests:
             assert eval_ds is None
             assert len(train_ds) == 1
             assert "text" in train_ds.column_names
-            assert "Proof plan:" in train_ds[0]["text"]
+            assert "### Proof Plan" in train_ds[0]["text"]
             assert "Lean 4 code:" in train_ds[0]["text"]
 
 
