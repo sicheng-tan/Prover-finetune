@@ -42,6 +42,7 @@ class LeanChecker:
         self.use_lean_interact = bool(merged_cfg.get("use_lean_interact", True))
         self.memory_limit_mb = merged_cfg.get("memory_limit_mb")
         self.lean_interact_verbose = bool(merged_cfg.get("lean_interact_verbose", False))
+        self.strict_project_setup = bool(merged_cfg.get("strict_project_setup", True))
         self._lean_server = None
 
     def _version_stamp_path(self) -> Path:
@@ -109,13 +110,12 @@ class LeanChecker:
     def setup_project(self) -> None:
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
-        if self._version_is_already_configured():
+        if self.strict_project_setup and self._version_is_already_configured():
             # Config matches local setup; skip rebuild workflow.
             return
 
-        # Fast path: if a minimal Mathlib-dependent Lean file can be checked,
-        # the environment is already usable and rebuild can be skipped.
-        if self._mathlib_smoke_test_passes():
+        # In non-strict mode, keep a fast path for already usable environments.
+        if (not self.strict_project_setup) and self._mathlib_smoke_test_passes():
             self._write_version_stamp()
             return
 
@@ -135,6 +135,8 @@ class LeanChecker:
             timeout=self.cache_get_timeout_sec,
         )
         self._write_version_stamp()
+        # Recreate lean-interact server so it binds to the refreshed project env.
+        self._lean_server = None
 
     def _build_check_content(self, theorem_block: str, proof: str) -> str:
         imports_block = "\n".join(f"import {name}" for name in self.header_imports)
@@ -158,7 +160,7 @@ class LeanChecker:
         if not all([AutoLeanServer, Command, LeanREPLConfig, LocalProject]):
             return False
         try:
-            project = LocalProject(directory=self.project_dir, auto_build=False)
+            project = LocalProject(directory=self.project_dir.resolve(), auto_build=False)
             config = LeanREPLConfig(
                 project=project,
                 verbose=self.lean_interact_verbose,

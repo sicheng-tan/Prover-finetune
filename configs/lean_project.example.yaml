@@ -18,6 +18,7 @@ timeout_sec: 120
 lake_exe: lake
 cache_get_timeout_sec: 300
 use_lean_interact: true
+strict_project_setup: true
 # Optional memory cap for lean-interact (MB). null means unlimited.
 memory_limit_mb: 16384
 lean_interact_verbose: true
