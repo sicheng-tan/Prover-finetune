@@ -3,6 +3,7 @@ experiment:
   split: test
   max_samples: 2
   pass_k: 4
+  gpu_ids: [0]
   verbose_logging: true
   output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-small-pass4
 

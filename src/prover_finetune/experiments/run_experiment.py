@@ -1,10 +1,14 @@
 import argparse
+import copy
+import concurrent.futures
 import json
 import logging
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
+import torch
 from tqdm import tqdm
 
 from .config import ExperimentConfig
@@ -75,6 +79,193 @@ def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
     return generation.strip(), "raw_fallback"
 
 
+def _discover_gpu_ids(exp_cfg: dict, model_cfg: dict, logger: logging.Logger) -> list[int]:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is not available; cannot run GPU-parallel experiment.")
+    visible = torch.cuda.device_count()
+    if visible <= 0:
+        raise RuntimeError("No visible CUDA devices found.")
+
+    configured = exp_cfg.get("gpu_ids")
+    if configured is None:
+        raise ValueError(
+            "experiment.gpu_ids must be explicitly configured, e.g. gpu_ids: [0, 1]."
+        )
+    if isinstance(configured, str):
+        gpu_ids = [int(x.strip()) for x in configured.split(",") if x.strip()]
+    elif isinstance(configured, list):
+        gpu_ids = [int(x) for x in configured]
+    else:
+        raise ValueError("experiment.gpu_ids must be a list[int] or comma-separated string.")
+    if not gpu_ids:
+        raise ValueError("experiment.gpu_ids cannot be empty.")
+    invalid = [gid for gid in gpu_ids if gid < 0 or gid >= visible]
+    if invalid:
+        raise ValueError(
+            f"experiment.gpu_ids has invalid entries {invalid}; visible device count is {visible}."
+        )
+    logger.info("Using %d parallel GPU workers on configured devices: %s", len(gpu_ids), gpu_ids)
+    if model_cfg.get("gpu_device") is not None:
+        logger.info("Overriding model.gpu_device per worker for parallel execution.")
+    return gpu_ids
+
+
+def _append(lines: list[str], msg: str) -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines.append(f"[{ts}] {msg}")
+
+
+def _process_one_problem(
+    row_idx: int,
+    total_rows: int,
+    row: dict,
+    pass_k: int,
+    prover,
+    checker,
+) -> tuple[dict, int, list[str]]:
+    logs: list[str] = []
+    theorem_block = _extract_theorem_block(row)
+    sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
+    _append(logs, "=" * 80)
+    _append(logs, f"SAMPLE {row_idx}/{total_rows} - id={sample_id}")
+    _append(logs, "-" * 80)
+    _append(logs, "THEOREM BLOCK:")
+    _append(logs, theorem_block)
+    _append(logs, "=" * 80)
+
+    ok = False
+    lean_log = ""
+    first_prediction = ""
+    first_prediction_lean_code = ""
+    first_extraction_mode = "none"
+    candidates = []
+
+    for idx in range(1, pass_k + 1):
+        retries_used = idx - 1
+        retries_remaining = max(0, pass_k - idx)
+        _append(logs, "=" * 80)
+        _append(logs, f"ATTEMPT {idx}/{pass_k} - GENERATION")
+        _append(logs, "-" * 80)
+        _append(
+            logs,
+            f"Sample id={sample_id} | retries_used={retries_used} | retries_remaining={retries_remaining}",
+        )
+        try:
+            pred_proof = prover.generate_proof(theorem_block)
+        except LLMGenerationTimeoutError as exc:
+            timeout_log = str(exc)
+            _append(logs, f"LLM generation timeout: {timeout_log}")
+            if idx == 1:
+                first_extraction_mode = "llm_timeout"
+                lean_log = timeout_log
+            candidates.append(
+                {
+                    "sample_idx": idx,
+                    "ok": False,
+                    "prediction": "",
+                    "prediction_lean_code": "",
+                    "extraction_mode": "llm_timeout",
+                    "lean_output": timeout_log,
+                }
+            )
+            _append(logs, "=" * 80)
+            continue
+
+        if idx == 1:
+            first_prediction = pred_proof
+        extracted_proof, extraction_mode = _extract_lean_code_from_generation(pred_proof)
+        if idx == 1:
+            first_prediction_lean_code = extracted_proof
+            first_extraction_mode = extraction_mode
+
+        _append(logs, "RAW MODEL OUTPUT:")
+        _append(logs, pred_proof)
+        _append(logs, "-" * 80)
+        _append(logs, f"EXTRACTED LEAN CODE (mode={extraction_mode}):")
+        _append(logs, extracted_proof)
+        _append(logs, "=" * 80)
+        _append(logs, f"ATTEMPT {idx}/{pass_k} - LEAN VERIFICATION")
+        _append(logs, "-" * 80)
+        cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
+        _append(logs, "LEAN OUTPUT:")
+        _append(logs, cur_log)
+        _append(logs, "-" * 80)
+        _append(logs, f"LEAN CHECK RESULT: ok={cur_ok}")
+        _append(logs, "=" * 80)
+
+        candidates.append(
+            {
+                "sample_idx": idx,
+                "ok": cur_ok,
+                "prediction": pred_proof,
+                "prediction_lean_code": extracted_proof,
+                "extraction_mode": extraction_mode,
+                "lean_output": cur_log,
+            }
+        )
+        if cur_ok:
+            ok = True
+            lean_log = cur_log
+            _append(
+                logs,
+                f"SUCCESS - sample id={sample_id} solved at attempt {idx}/{pass_k} (retries_used={retries_used}).",
+            )
+            _append(logs, "=" * 80)
+            break
+        if idx == 1:
+            lean_log = cur_log
+
+    if not ok:
+        _append(logs, f"FAILED - sample id={sample_id} after {pass_k} attempts.")
+        _append(logs, "=" * 80)
+
+    result = {
+        "row_idx": row_idx,
+        "id": sample_id,
+        "ok": ok,
+        "theorem": theorem_block,
+        "comment": row.get("comment"),
+        "prediction": first_prediction,
+        "prediction_lean_code": first_prediction_lean_code,
+        "extraction_mode": first_extraction_mode,
+        "lean_output": lean_log,
+        "pass_k": pass_k,
+        "candidates": candidates,
+    }
+    return result, int(ok), logs
+
+
+def _run_worker(
+    worker_idx: int,
+    gpu_id: int,
+    shard: list[tuple[int, dict]],
+    total_rows: int,
+    pass_k: int,
+    model_cfg: dict,
+    lean_cfg: dict,
+    problem_log_dir: Path,
+) -> list[tuple[int, dict, int]]:
+    worker_model_cfg = copy.deepcopy(model_cfg)
+    worker_model_cfg["gpu_device"] = gpu_id
+    worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
+    prover = build_prover_generator(worker_model_cfg)
+
+    worker_lean_cfg = copy.deepcopy(lean_cfg)
+    base_project_dir = worker_lean_cfg.get("project_dir", ".lean_runner")
+    worker_lean_cfg["project_dir"] = f"{base_project_dir}_worker_{worker_idx}"
+    checker = LeanChecker(worker_lean_cfg)
+    checker.setup_project()
+
+    out: list[tuple[int, dict, int]] = []
+    for row_idx, row in shard:
+        result, ok_int, logs = _process_one_problem(row_idx, total_rows, row, pass_k, prover, checker)
+        log_name_raw = row.get("name") or row.get("id") or f"sample_{row_idx}"
+        safe_name = str(log_name_raw).replace("/", "_")
+        (problem_log_dir / f"{safe_name}.log").write_text("\n".join(logs) + "\n", encoding="utf-8")
+        out.append((row_idx, result, ok_int))
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Path to experiment yaml config")
@@ -95,149 +286,53 @@ def main() -> None:
     _attach_file_logger(logger, output_dir)
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
-    prover = build_prover_generator(model_cfg)
-    checker = LeanChecker(lean_cfg)
-    checker.setup_project()
-    logger.info("Lean project setup completed.")
-
     pass_k = int(exp_cfg.get("pass_k", 1))
-    results = []
-    num_pass = 0
     total_rows = len(dataset)
-    for row_idx, row in enumerate(tqdm(dataset, desc="miniF2F eval"), start=1):
-        theorem_block = _extract_theorem_block(row)
-        sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
-        logger.info("=" * 80)
-        logger.info("SAMPLE %d/%d - id=%s", row_idx, total_rows, sample_id)
-        logger.info("-" * 80)
-        logger.info("THEOREM BLOCK:")
-        logger.info("%s", theorem_block)
-        logger.info("=" * 80)
-        ok = False
-        lean_log = ""
-        first_prediction = ""
-        first_prediction_lean_code = ""
-        first_extraction_mode = "none"
-        candidates = []
-        for idx in range(1, pass_k + 1):
-            retries_used = idx - 1
-            retries_remaining = max(0, pass_k - idx)
-            logger.info("=" * 80)
-            logger.info(
-                "ATTEMPT %d/%d - GENERATION",
-                idx,
-                pass_k,
-            )
-            logger.info("-" * 80)
-            logger.info(
-                "Sample id=%s | retries_used=%d | retries_remaining=%d",
-                sample_id,
-                retries_used,
-                retries_remaining,
-            )
-            try:
-                pred_proof = prover.generate_proof(theorem_block)
-            except LLMGenerationTimeoutError as exc:
-                timeout_log = str(exc)
-                logger.warning(
-                    "LLM generation timeout (sample id=%s, attempt %d/%d): %s",
-                    sample_id,
-                    idx,
-                    pass_k,
-                    timeout_log,
-                )
-                if idx == 1:
-                    first_prediction = ""
-                    first_prediction_lean_code = ""
-                    first_extraction_mode = "llm_timeout"
-                    lean_log = timeout_log
-                candidates.append(
-                    {
-                        "sample_idx": idx,
-                        "ok": False,
-                        "prediction": "",
-                        "prediction_lean_code": "",
-                        "extraction_mode": "llm_timeout",
-                        "lean_output": timeout_log,
-                    }
-                )
-                logger.info("=" * 80)
-                continue
-            if idx == 1:
-                first_prediction = pred_proof
-            extracted_proof, extraction_mode = _extract_lean_code_from_generation(pred_proof)
-            if idx == 1:
-                first_prediction_lean_code = extracted_proof
-                first_extraction_mode = extraction_mode
-            logger.info("RAW MODEL OUTPUT:")
-            logger.info("%s", pred_proof)
-            logger.info("-" * 80)
-            logger.info("EXTRACTED LEAN CODE (mode=%s):", extraction_mode)
-            logger.info("%s", extracted_proof)
-            logger.info("=" * 80)
-            logger.info("ATTEMPT %d/%d - LEAN VERIFICATION", idx, pass_k)
-            logger.info("-" * 80)
-            logger.info(
-                "Verifying generated code with Lean compiler... (sample id=%s, attempt %d/%d)",
-                sample_id,
-                idx,
-                pass_k,
-            )
-            cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
-            logger.info("LEAN OUTPUT:")
-            logger.info("%s", cur_log)
-            logger.info("-" * 80)
-            logger.info("LEAN CHECK RESULT: ok=%s", cur_ok)
-            logger.info("=" * 80)
-            candidates.append(
-                {
-                    "sample_idx": idx,
-                    "ok": cur_ok,
-                    "prediction": pred_proof,
-                    "prediction_lean_code": extracted_proof,
-                    "extraction_mode": extraction_mode,
-                    "lean_output": cur_log,
-                }
-            )
-            if cur_ok:
-                ok = True
-                lean_log = cur_log
-                logger.info(
-                    "SUCCESS - sample id=%s solved at attempt %d/%d (retries_used=%d).",
-                    sample_id,
-                    idx,
-                    pass_k,
-                    retries_used,
-                )
-                logger.info("=" * 80)
-                break
-            # Keep the first failure log for easier debugging.
-            if idx == 1:
-                lean_log = cur_log
-
-        num_pass += int(ok)
-        if not ok:
-            logger.info(
-                "FAILED - sample id=%s after %d attempts (retries_used=%d).",
-                sample_id,
-                pass_k,
-                max(0, pass_k - 1),
-            )
-            logger.info("=" * 80)
-        results.append(
-            {
-                "id": sample_id,
-                "ok": ok,
-                "theorem": theorem_block,
-                "comment": row.get("comment"),
-                "prediction": first_prediction,
-                "prediction_lean_code": first_prediction_lean_code,
-                "extraction_mode": first_extraction_mode,
-                "lean_output": lean_log,
-                "pass_k": pass_k,
-                "candidates": candidates,
-            }
+    if total_rows == 0:
+        summary = {"total": 0, "pass": 0, f"pass@{pass_k}": 0.0}
+        (output_dir / "results.json").write_text(
+            json.dumps({"summary": summary, "results": []}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
+        (output_dir / "summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(json.dumps(summary, ensure_ascii=False))
+        return
+
+    problem_log_dir = output_dir / "problem_logs"
+    problem_log_dir.mkdir(parents=True, exist_ok=True)
+    gpu_ids = _discover_gpu_ids(exp_cfg, model_cfg, logger)
+    worker_count = min(len(gpu_ids), total_rows)
+    gpu_ids = gpu_ids[:worker_count]
+    indexed_rows = list(enumerate(dataset, start=1))
+    shards: list[list[tuple[int, dict]]] = [[] for _ in range(worker_count)]
+    for i, item in enumerate(indexed_rows):
+        shards[i % worker_count].append(item)
+
+    packed_results: list[tuple[int, dict, int]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(
+                _run_worker,
+                worker_idx=i,
+                gpu_id=gpu_ids[i],
+                shard=shards[i],
+                total_rows=total_rows,
+                pass_k=pass_k,
+                model_cfg=model_cfg,
+                lean_cfg=lean_cfg,
+                problem_log_dir=problem_log_dir,
+            )
+            for i in range(worker_count)
+        ]
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
+            packed_results.extend(future.result())
+
+    packed_results.sort(key=lambda x: x[0])
+    results = [item[1] for item in packed_results]
+    num_pass = sum(item[2] for item in packed_results)
 
     total = len(results)
     pass_at_k = (num_pass / total) if total > 0 else 0.0

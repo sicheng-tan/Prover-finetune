@@ -114,6 +114,7 @@ python scripts/extract_minif2f_lean_to_json.py
   - `split`: `valid` / `test`
   - `max_samples`: 调试时可先设小值
   - `pass_k`: 每题最多尝试的候选 proof 数（用于 pass@k）
+  - `gpu_ids`: 并行评测使用的 GPU 列表（必填，例如 `[0]` 或 `[0,1,2]`）
   - `verbose_logging`: 是否输出详细中间日志（完整生成、Lean 检查输出、重试进度）
   - `output_dir`: 实验输出目录
 - `model`
@@ -148,6 +149,14 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
 
 - `summary.json`：整体统计（`total`、`pass`、`pass@k`）
 - `results.json`：逐题结果（首个预测、候选列表、Lean 输出日志等）
+- `experiment.log`：整体运行日志
+- `problem_logs/<name>.log`：每道题独立日志（优先用题目 `name` 命名，缺失时回退到 `id`）
+
+并行执行说明：
+
+- 会按 `gpu_ids` 长度启动同等数量线程（每线程绑定一个 GPU）。
+- 每线程独立初始化 prover 与 Lean checker，避免 `Main.lean` 互相覆盖。
+- 若 `gpu_ids` 包含不可见设备编号，程序会在启动时直接报错。
 
 `results.json` 中每条样本会记录：
 
