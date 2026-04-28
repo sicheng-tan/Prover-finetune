@@ -111,9 +111,21 @@ def process_record(record: dict) -> dict:
             reasoning_steps.append(normalized)
 
     proof_no_comments = _remove_comment_ranges(formal_code, comments)
+    goal_text = "\n\n".join(problem_comment_blocks).strip()
+    reasoning_text = "\n".join(reasoning_steps).strip()
+    if goal_text and reasoning_text:
+        proof_plan = f"#### Goal:\n{goal_text}\n\n#### Reasoning Step:\n{reasoning_text}"
+    elif goal_text:
+        proof_plan = f"#### Goal:\n{goal_text}"
+    elif reasoning_text:
+        proof_plan = f"#### Reasoning Step:\n{reasoning_text}"
+    else:
+        proof_plan = ""
+
     return {
         "formal_statement": _to_sorry_statement(str(record.get("formal_statement", ""))),
-        "reasoning_steps": reasoning_steps,
+        "reasoning_steps": proof_plan,
+        "reasoning_steps_list": reasoning_steps,
         "formal_proof_no_comments": proof_no_comments,
     }
 

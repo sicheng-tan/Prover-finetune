@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 
 from tqdm import tqdm
@@ -32,6 +33,18 @@ def _setup_logger(verbose_logging: bool) -> logging.Logger:
     logger.setLevel(logging.INFO if verbose_logging else logging.WARNING)
     logger.propagate = False
     return logger
+
+
+def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
+    lean4_match = re.search(r"```lean4\b[^\n\r]*[\r]?\n(.*?)```", generation, flags=re.DOTALL | re.IGNORECASE)
+    if lean4_match:
+        return lean4_match.group(1).strip(), "lean4_fence"
+
+    lean_match = re.search(r"```lean\b[^\n\r]*[\r]?\n(.*?)```", generation, flags=re.DOTALL | re.IGNORECASE)
+    if lean_match:
+        return lean_match.group(1).strip(), "lean_fence"
+
+    return generation.strip(), "raw_fallback"
 
 
 def main() -> None:
@@ -73,10 +86,16 @@ def main() -> None:
         ok = False
         lean_log = ""
         first_prediction = pred_proofs[0] if pred_proofs else ""
+        first_prediction_lean_code = ""
+        first_extraction_mode = "none"
         candidates = []
         for idx, pred_proof in enumerate(pred_proofs, start=1):
             retries_used = idx - 1
             retries_remaining = max(0, pass_k - idx)
+            extracted_proof, extraction_mode = _extract_lean_code_from_generation(pred_proof)
+            if idx == 1:
+                first_prediction_lean_code = extracted_proof
+                first_extraction_mode = extraction_mode
             logger.info(
                 "Sample id=%s | attempt %d/%d | retries_used=%d | retries_remaining=%d",
                 sample_id,
@@ -86,7 +105,13 @@ def main() -> None:
                 retries_remaining,
             )
             logger.info("Full LLM generation (attempt %d):\n%s", idx, pred_proof)
-            cur_ok, cur_log = checker.check_proof(theorem_block, pred_proof)
+            logger.info(
+                "Lean code extraction (attempt %d): mode=%s\nExtracted Lean code:\n%s",
+                idx,
+                extraction_mode,
+                extracted_proof,
+            )
+            cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
             logger.info(
                 "Lean check result (attempt %d): ok=%s\nLean output:\n%s",
                 idx,
@@ -98,6 +123,8 @@ def main() -> None:
                     "sample_idx": idx,
                     "ok": cur_ok,
                     "prediction": pred_proof,
+                    "prediction_lean_code": extracted_proof,
+                    "extraction_mode": extraction_mode,
                     "lean_output": cur_log,
                 }
             )
@@ -131,6 +158,8 @@ def main() -> None:
                 "theorem": theorem_block,
                 "comment": row.get("comment"),
                 "prediction": first_prediction,
+                "prediction_lean_code": first_prediction_lean_code,
+                "extraction_mode": first_extraction_mode,
                 "lean_output": lean_log,
                 "pass_k": pass_k,
                 "candidates": candidates,

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,13 @@ def _normalize_reasoning_steps(value: Any) -> list[str]:
     return []
 
 
+def _extract_decl_name(formal_statement: str) -> str:
+    match = re.search(r"\b(theorem|lemma)\s+([A-Za-z0-9_'.]+)", formal_statement)
+    if match:
+        return match.group(2)
+    return ""
+
+
 def _format_deepseek_prover_v2_example(row: dict[str, Any], data_cfg: dict[str, Any]) -> dict[str, str]:
     formal_statement_field = data_cfg.get("formal_statement_field", "formal_statement")
     reasoning_steps_field = data_cfg.get("reasoning_steps_field", "reasoning_steps")
@@ -53,6 +61,7 @@ def _format_deepseek_prover_v2_example(row: dict[str, Any], data_cfg: dict[str, 
     prompt_template = data_cfg.get("deepseek_prompt_template", DEEPSEEK_PROVER_V2_PROMPT)
 
     formal_statement = str(row.get(formal_statement_field, "")).strip()
+    decl_name = _extract_decl_name(formal_statement)
     reasoning_steps = _normalize_reasoning_steps(row.get(reasoning_steps_field, []))
     formal_proof = str(row.get(proof_field, "")).strip()
 
@@ -66,8 +75,9 @@ def _format_deepseek_prover_v2_example(row: dict[str, Any], data_cfg: dict[str, 
             "Close the goal with algebraic/simp tactics."
         )
 
+    plan_title = f"### Proof Plan for {decl_name}" if decl_name else "### Proof Plan"
     assistant_completion = (
-        "Proof plan:\n"
+        f"{plan_title}\n\n"
         f"{plan_lines}\n\n"
         "Lean 4 code:\n"
         "```lean4\n"
