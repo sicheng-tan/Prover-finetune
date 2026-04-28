@@ -11,6 +11,8 @@
 
 - **QLoRA 微调**：支持 Hugging Face 数据集和本地 JSONL，模板化构造训练文本。
 - **miniF2F 实验评测**：支持从 `json` / `jsonl` / Lean 文件目录加载题目。
+- **pass@k 评测**：单题可采样多个 proof 候选，任一通过 Lean 校验即记为通过。
+- **模型模板自适应**：支持 `model_type` 自动识别，内置 DeepSeek-Prover-V2 专用提示模板。
 - **Lean 环境自动初始化**：首次运行实验时自动生成 `lean-toolchain`、`lakefile.lean`，并拉取 mathlib 缓存。
 - **可复用的版本戳机制**：当 Lean/Mathlib 配置不变时跳过重复构建。
 
@@ -94,9 +96,11 @@ python scripts/extract_minif2f_lean_to_json.py
 - `experiment`
   - `split`: `valid` / `test`
   - `max_samples`: 调试时可先设小值
+  - `pass_k`: 每题最多尝试的候选 proof 数（用于 pass@k）
   - `output_dir`: 实验输出目录
 - `model`
   - `name_or_path`: 基座模型
+  - `model_type`: `auto` / `generic` / `deepseek_prover_v2`
   - `adapter_path`: LoRA 适配器目录（可为空）
   - 生成参数：`max_new_tokens` / `temperature` / `top_p` / `do_sample`
 - `minif2f`
@@ -121,8 +125,27 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
 
 输出目录（默认示例：`outputs/experiments/minif2f-baseline`）中包含：
 
-- `summary.json`：整体统计（`total`、`pass`、`pass@1`）
-- `results.json`：逐题结果（预测 proof、Lean 输出日志等）
+- `summary.json`：整体统计（`total`、`pass`、`pass@k`）
+- `results.json`：逐题结果（首个预测、候选列表、Lean 输出日志等）
+
+`results.json` 中每条样本会记录：
+
+- `prediction`：第一个候选 proof（便于快速查看）
+- `candidates`：按采样顺序保存所有候选的 `ok`、`prediction`、`lean_output`
+- 一旦某候选校验通过，会提前停止该题后续候选验证（提高评测速度）
+
+### 6) DeepSeek-Prover-V2 pass@k 示例
+
+项目已提供配置：
+
+- `configs/experiment.deepseek_prover_v2_7b.pass16.yaml`
+
+运行方式：
+
+```bash
+python -m src.prover_finetune.experiments.run_experiment \
+  --config configs/experiment.deepseek_prover_v2_7b.pass16.yaml
+```
 
 ---
 
@@ -138,9 +161,11 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
   - `lora`（`r`、`alpha`、`dropout`、`target_modules`）
 - `data`
   - `source_type`: `huggingface` 或 `jsonl`
+  - `formatter_type`: `auto` / `generic` / `deepseek_prover_v2`
   - Hugging Face: `dataset_name`、`dataset_config`、`train_split`（`eval_split` 可选）
   - JSONL: `train_path`、`eval_path`
-  - 文本模板：`template`（可直接使用原始字段，如 `{formal_ground_truth}`）
+  - 通用模板：`template`（可直接使用原始字段，如 `{formal_ground_truth}`）
+  - DeepSeek 模板字段：`formal_statement_field`、`reasoning_steps_field`、`proof_field`
   - `max_seq_length`
 - `training`
   - `output_dir`、batch size、学习率、warmup、scheduler、save/eval steps 等
@@ -155,6 +180,11 @@ python -m src.prover_finetune.finetune.train_qlora --config configs/finetune.exa
 
 - `<output_dir>/adapter`
 
+当 `formatter_type=deepseek_prover_v2` 时，训练样本会被格式化为：
+
+- 用户部分：给定 theorem 的 DeepSeek-Prover-V2 风格 prompt
+- 助手部分：`Proof plan` + `Lean 4 code`（代码块）
+
 ---
 
 ## NuminaMath-LEAN 数据分析与筛选
@@ -164,7 +194,6 @@ python -m src.prover_finetune.finetune.train_qlora --config configs/finetune.exa
 ```bash
 python scripts/analyze_numinamath_lean.py \
   --dataset-name AI-MO/NuminaMath-LEAN \
-  --split train \
   --tokenizer-name gpt2
 ```
 
@@ -180,7 +209,6 @@ python scripts/analyze_numinamath_lean.py \
 ```bash
 python scripts/filter_numinamath_lean.py \
   --dataset-name AI-MO/NuminaMath-LEAN \
-  --split train \
   --tokenizer-name gpt2 \
   --max-formal-tokens 4096
 ```
@@ -194,6 +222,25 @@ python scripts/filter_numinamath_lean.py \
 默认输出文件：
 
 - `data/processed/numinamath_lean_filtered_train.jsonl`
+
+输出 JSONL 会额外包含：
+
+- `formal_ground_truth_token_count`（便于后续按长度做分桶训练）
+
+---
+
+## 测试（数据格式）
+
+可运行数据格式测试，验证 DeepSeek 数据模板拼接逻辑：
+
+```bash
+python test/test_data_formatting.py
+```
+
+该测试主要检查：
+
+- `deepseek_prover_v2` 格式是否包含 `Proof plan` 与 `Lean 4 code`
+- `load_and_process_dataset` 是否正确产出 `text` 字段
 
 ---
 
@@ -214,4 +261,5 @@ python scripts/filter_numinamath_lean.py \
 
 - `miniF2F` 加载器默认会按 `split` 过滤；若数据行不含 `split` 字段，会直接纳入当前评测集合。
 - Lean 校验时会将 theorem 与模型生成 proof 写入 `Main.lean` 并执行 `lake env lean Main.lean`。
+- `.gitignore` 默认忽略 `data/**`，但保留 `data/processed/**` 便于版本化关键处理结果。
 - 详细 Lean/Mathlib 版本管理可参考 `docs/lean-mathlib-config.md`（若你本地已维护该文档）。

@@ -1,5 +1,5 @@
 model:
-  name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+  name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
   trust_remote_code: false
   use_4bit: true
   use_8bit: false
@@ -10,11 +10,15 @@ model:
     target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 data:
-  source_type: huggingface
-  dataset_name: AI-MO/NuminaMath-LEAN
-  dataset_config: null
-  train_split: train
-  template: "{formal_ground_truth}"
+  # Suggested DeepSeek-Prover-V2 workflow:
+  # 1) Build filtered dataset: scripts/filter_numinamath_lean.py
+  # 2) Extract reasoning/proof fields: scripts/extract_numinamath_reasoning.py
+  source_type: jsonl
+  train_path: data/processed/numinamath_lean_reasoning_train.jsonl
+  formatter_type: deepseek_prover_v2
+  formal_statement_field: formal_statement
+  reasoning_steps_field: reasoning_steps
+  proof_field: formal_proof_no_comments
   max_seq_length: 4096
 
 training:

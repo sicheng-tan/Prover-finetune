@@ -5,3 +5,10 @@ data/**
 !data/
 !data/processed/
 !data/processed/**
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.cpython-*.pyc

@@ -1,0 +1,26 @@
+experiment:
+  name: minif2f-deepseek-prover-v2-7b-pass16
+  split: test
+  max_samples: null
+  pass_k: 16
+  output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-pass16
+
+model:
+  name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
+  model_type: deepseek_prover_v2
+  adapter_path: null
+  device_map: auto
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.95
+  do_sample: true
+
+minif2f:
+  source_type: local_json
+  json_path: data/processed/test.json
+  jsonl_path: data/processed/test.jsonl
+  root_dir: data/
+  split_file: data/processed/test.txt
+
+lean:
+  project_config_path: configs/lean_project.example.yaml

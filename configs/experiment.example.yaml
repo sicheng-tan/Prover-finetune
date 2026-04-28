@@ -1,11 +1,14 @@
 experiment:
   name: minif2f-baseline
   split: valid
-  max_samples: 20
+  max_samples: null
+  pass_k: 1
   output_dir: outputs/experiments/minif2f-baseline
 
 model:
   name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+  # auto | generic | deepseek_prover_v2
+  model_type: auto
   adapter_path: null
   device_map: auto
   max_new_tokens: 256

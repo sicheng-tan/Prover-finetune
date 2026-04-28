@@ -7,7 +7,7 @@ from tqdm import tqdm
 from .config import ExperimentConfig
 from .lean_checker import LeanChecker
 from .minif2f import load_minif2f
-from .prover import ProverGenerator
+from .prover import build_prover_generator
 
 
 def _extract_theorem_block(problem: dict) -> str:
@@ -38,16 +38,39 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
-    prover = ProverGenerator(model_cfg)
+    prover = build_prover_generator(model_cfg)
     checker = LeanChecker(lean_cfg)
     checker.setup_project()
 
+    pass_k = int(exp_cfg.get("pass_k", 1))
     results = []
     num_pass = 0
     for row in tqdm(dataset, desc="miniF2F eval"):
         theorem_block = _extract_theorem_block(row)
-        pred_proof = prover.generate_proof(theorem_block)
-        ok, lean_log = checker.check_proof(theorem_block, pred_proof)
+        pred_proofs = prover.generate_proofs(theorem_block, num_samples=pass_k)
+
+        ok = False
+        lean_log = ""
+        first_prediction = pred_proofs[0] if pred_proofs else ""
+        candidates = []
+        for idx, pred_proof in enumerate(pred_proofs, start=1):
+            cur_ok, cur_log = checker.check_proof(theorem_block, pred_proof)
+            candidates.append(
+                {
+                    "sample_idx": idx,
+                    "ok": cur_ok,
+                    "prediction": pred_proof,
+                    "lean_output": cur_log,
+                }
+            )
+            if cur_ok:
+                ok = True
+                lean_log = cur_log
+                break
+            # Keep the first failure log for easier debugging.
+            if idx == 1:
+                lean_log = cur_log
+
         num_pass += int(ok)
         results.append(
             {
@@ -55,14 +78,16 @@ def main() -> None:
                 "ok": ok,
                 "theorem": theorem_block,
                 "comment": row.get("comment"),
-                "prediction": pred_proof,
+                "prediction": first_prediction,
                 "lean_output": lean_log,
+                "pass_k": pass_k,
+                "candidates": candidates,
             }
         )
 
     total = len(results)
-    pass_at_1 = (num_pass / total) if total > 0 else 0.0
-    summary = {"total": total, "pass": num_pass, "pass@1": pass_at_1}
+    pass_at_k = (num_pass / total) if total > 0 else 0.0
+    summary = {"total": total, "pass": num_pass, f"pass@{pass_k}": pass_at_k}
 
     (output_dir / "results.json").write_text(
         json.dumps({"summary": summary, "results": results}, ensure_ascii=False, indent=2),

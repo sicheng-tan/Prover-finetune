@@ -89,7 +89,7 @@ def main() -> None:
     train_cfg = cfg.section("training")
 
     model, tokenizer = build_model_and_tokenizer(model_cfg)
-    train_ds, eval_ds = load_and_process_dataset(data_cfg)
+    train_ds, eval_ds = load_and_process_dataset(data_cfg, model_cfg=model_cfg)
     peft_config = build_lora_config(model_cfg)
 
     output_dir = Path(train_cfg.get("output_dir", "outputs/qlora"))
