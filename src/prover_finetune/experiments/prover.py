@@ -93,10 +93,23 @@ class ProverGenerator:
             "-- proof:"
         )
 
+    @staticmethod
+    def _normalize_decoded_text(text: str) -> str:
+        # Some tokenizers may leak GPT2-style visible markers on decode.
+        # Normalize only when those markers clearly appear in the output.
+        if "Ġ" in text or "Ċ" in text:
+            return text.replace("Ġ", " ").replace("Ċ", "\n")
+        return text
+
     def _decode_generations(self, prompt: str, out: torch.Tensor) -> list[str]:
         texts: list[str] = []
         for seq in out:
-            text = self.tokenizer.decode(seq, skip_special_tokens=True)
+            text = self.tokenizer.decode(
+                seq,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+            text = self._normalize_decoded_text(text)
             texts.append(text[len(prompt) :].strip() if text.startswith(prompt) else text.strip())
         return texts
 
@@ -104,7 +117,12 @@ class ProverGenerator:
         texts: list[str] = []
         for seq in out:
             continuation = seq[input_len:]
-            texts.append(self.tokenizer.decode(continuation, skip_special_tokens=True).strip())
+            text = self.tokenizer.decode(
+                continuation,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+            texts.append(self._normalize_decoded_text(text).strip())
         return texts
 
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
@@ -149,7 +167,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_cfg["name_or_path"],
-            use_fast=True,
+            use_fast=False,
             trust_remote_code=True,
         )
         if self.tokenizer.pad_token is None:
