@@ -65,18 +65,11 @@ class DataFormattingTests:
         self._log(
             "Loaded sample",
             {
-                "formal_statement_preview": self._shorten(self.sample.get("formal_statement", "")),
+                "formal_statement": self.sample.get("formal_statement", ""),
                 "reasoning_steps_count": len(self.sample.get("reasoning_steps", [])),
-                "proof_preview": self._shorten(self.sample.get("formal_proof_no_comments", "")),
+                "proof": self.sample.get("formal_proof_no_comments", ""),
             },
         )
-
-    @staticmethod
-    def _shorten(text, max_len=180):
-        text = str(text).replace("\n", "\\n")
-        if len(text) <= max_len:
-            return text
-        return text[:max_len] + "...(truncated)"
 
     @staticmethod
     def _log(title, payload):
@@ -90,10 +83,10 @@ class DataFormattingTests:
         }
         formatted = self._format_deepseek_prover_v2_example(self.sample, data_cfg)["text"]
         self._log(
-            "Formatted text preview",
+            "Formatted text",
             {
                 "text_length": len(formatted),
-                "preview": self._shorten(formatted, max_len=260),
+                "text": formatted,
             },
         )
 
@@ -127,7 +120,7 @@ class DataFormattingTests:
                 {
                     "dataset_size": len(train_ds),
                     "column_names": train_ds.column_names,
-                    "first_text_preview": self._shorten(train_ds[0]["text"], max_len=260),
+                    "first_text": train_ds[0]["text"],
                 },
             )
 
