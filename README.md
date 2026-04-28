@@ -13,8 +13,7 @@
 - **miniF2F 实验评测**：支持从 `json` / `jsonl` / Lean 文件目录加载题目。
 - **pass@k 评测**：单题可采样多个 proof 候选，任一通过 Lean 校验即记为通过。
 - **模型模板自适应**：支持 `model_type` 自动识别，内置 DeepSeek-Prover-V2 专用提示模板。
-- **Lean 环境自动初始化**：首次运行实验时自动生成 `lean-toolchain`、`lakefile.lean`，并拉取 mathlib 缓存。
-- **可复用的版本戳机制**：当 Lean/Mathlib 配置不变时跳过重复构建。
+- **LeanInteract 本地工程验证**：按本地 `mathlib4` 工程路径加载（`LocalProject`），不在代码中动态改写 Lean 工程。
 
 ---
 
@@ -56,14 +55,24 @@ pip install -r requirements.txt
 
 > 说明：`requirements.txt` 仅包含基础依赖，实际运行需有可用的 PyTorch/CUDA 环境（若进行 GPU 训练/推理）。
 
-### 2) Lean / Lake 环境
+### 2) Lean / Lake 环境（手动）
 
 请确保系统可执行 `lake` 命令（通常通过 `elan` 安装 Lean 工具链后可用）。  
-实验首次运行会在配置的 `project_dir` 下自动生成和更新 Lean 工程。
+本项目不再在代码中自动构建 Lean 工程，请先准备本地 `mathlib4` 目录（推荐子模块）并手动执行 `lake`。
 
 ---
 
 ## 工作流 A：miniF2F 实验评测
+
+### 0) 准备 mathlib4（推荐 git submodule）
+
+```bash
+git submodule update --init --recursive
+cd mathlib4
+lake exe cache get
+lake build
+cd ..
+```
 
 ### 1) 下载 miniF2F Lean 数据
 
@@ -111,10 +120,12 @@ python scripts/extract_minif2f_lean_to_json.py
 - `lean`
   - `project_config_path`: 指向 `configs/lean_project.example.yaml`
 
-再编辑 `configs/lean_project.example.yaml`：
+再编辑 `configs/lean_project.example.yaml`（参考 `test/lean_verifier.py` 用法）：
 
-- 版本与依赖：`lean_version`、`mathlib_ref`、`extra_dependencies`
-- 运行时：`timeout_sec`、`cache_get_timeout_sec`
+- 本地工程路径：`mathlib_path`（例如 `mathlib4`）
+- Lean 版本：`lean_version`（默认 `v4.27.0`；若 `mathlib_path/lean-toolchain` 存在会自动读取该版本）
+- 运行时：`timeout_sec`
+- lean-interact 模式：`use_lean_interact`、`use_auto_server`、`memory_limit_mb`
 - 校验头部：`header_imports`、`header_set_options`、`header_open_scopes`
 
 ### 4) 运行实验
@@ -250,8 +261,8 @@ python test/test_data_formatting.py
 
 - **`lake: command not found`**
   - 说明 Lean 工具链未安装或未加入 PATH，请先安装 `elan/lean`。
-- **首次实验启动较慢**
-  - 正常现象：会执行 `lake update` 与 `lake exe cache get` 拉取依赖与缓存。
+- **验证器提示找不到 `mathlib_path`**
+  - 请先初始化子模块并在该目录执行 `lake build`。
 - **模型显存不足**
   - 可降低 `max_new_tokens`、换更小模型、启用 4bit 量化，或减小 batch。
 - **生成 proof 通过率低**

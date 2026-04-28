@@ -1,27 +1,15 @@
-# Lean project-level configuration for experiment checker rebuilds.
-# You can point experiment config lean.project_config_path to this file.
+# Lean-interact verifier configuration (LocalProject mode).
+# Use a local mathlib4 project directory (recommended as git submodule).
 
-project_dir: .lean_runner
-lean_version: leanprover/lean4:v4.27.0
-mathlib_ref: v4.27.0
-package_name: runner
-
-# Optional extra dependencies. Each item requires: name, git, ref.
-extra_dependencies: []
-# extra_dependencies:
-#   - name: Cli
-#     git: https://github.com/leanprover/lean4-cli
-#     ref: v4.27.0
-
-# Runtime options
+mathlib_path: mathlib4
+lean_version: v4.27.0
 timeout_sec: 120
-lake_exe: lake
-cache_get_timeout_sec: 300
+
+# lean-interact server behavior
 use_lean_interact: true
-strict_project_setup: true
-# Optional memory cap for lean-interact (MB). null means unlimited.
+use_auto_server: true
 memory_limit_mb: 16384
-lean_interact_verbose: true
+lean_interact_verbose: false
 
 # Header used in Main.lean for proof checking.
 header_imports:
