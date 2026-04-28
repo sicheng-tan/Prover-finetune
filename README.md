@@ -103,6 +103,7 @@ python scripts/extract_minif2f_lean_to_json.py
   - `name_or_path`: 基座模型
   - `model_type`: `auto` / `generic` / `deepseek_prover_v2`
   - `adapter_path`: LoRA 适配器目录（可为空）
+  - 设备参数：`gpu_device`（如 `0` 或 `cuda:1`）/ `device_map`（更底层，优先级更高）
   - 生成参数：`inference_timeout_sec` / `max_new_tokens` / `temperature` / `top_p` / `do_sample`
 - `minif2f`
   - `source_type`: `local_json` / `local_jsonl` / `local_lean_dir`

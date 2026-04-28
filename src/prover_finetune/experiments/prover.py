@@ -47,13 +47,29 @@ def _generation_timeout(timeout_sec: int | None):
 
 class ProverGenerator:
     def __init__(self, model_cfg: dict):
+        require_gpu = bool(model_cfg.get("require_gpu", True))
+        if require_gpu and not torch.cuda.is_available():
+            raise RuntimeError(
+                "GPU is required for model loading (require_gpu=True), "
+                "but torch.cuda.is_available() is False."
+            )
+        gpu_device = model_cfg.get("gpu_device")
+        if gpu_device is not None:
+            gpu_device_str = str(gpu_device)
+            default_device_map = (
+                gpu_device_str if gpu_device_str.startswith("cuda:") else f"cuda:{gpu_device_str}"
+            )
+        else:
+            default_device_map = "cuda:0" if torch.cuda.is_available() else "auto"
+        device_map = model_cfg.get("device_map", default_device_map)
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_cfg["name_or_path"], use_fast=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         base_model = AutoModelForCausalLM.from_pretrained(
             model_cfg["name_or_path"],
-            device_map=model_cfg.get("device_map", "auto"),
+            device_map=device_map,
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
         )
         adapter_path = model_cfg.get("adapter_path")
@@ -115,6 +131,22 @@ class ProverGenerator:
 
 class DeepSeekProverV2Generator(ProverGenerator):
     def __init__(self, model_cfg: dict):
+        require_gpu = bool(model_cfg.get("require_gpu", True))
+        if require_gpu and not torch.cuda.is_available():
+            raise RuntimeError(
+                "GPU is required for model loading (require_gpu=True), "
+                "but torch.cuda.is_available() is False."
+            )
+        gpu_device = model_cfg.get("gpu_device")
+        if gpu_device is not None:
+            gpu_device_str = str(gpu_device)
+            default_device_map = (
+                gpu_device_str if gpu_device_str.startswith("cuda:") else f"cuda:{gpu_device_str}"
+            )
+        else:
+            default_device_map = "cuda:0" if torch.cuda.is_available() else "auto"
+        device_map = model_cfg.get("device_map", default_device_map)
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_cfg["name_or_path"],
             use_fast=True,
@@ -125,7 +157,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
 
         base_model = AutoModelForCausalLM.from_pretrained(
             model_cfg["name_or_path"],
-            device_map=model_cfg.get("device_map", "auto"),
+            device_map=device_map,
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             trust_remote_code=True,
         )
