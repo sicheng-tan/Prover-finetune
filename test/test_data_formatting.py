@@ -96,8 +96,10 @@ class DataFormattingTests:
         assert "theorem" in formatted
         assert "by" in formatted
         assert "User:\n" not in formatted
-        # 验证 reasoning steps 被编号拼接，避免出现空 plan。
-        assert "\n1. " in formatted
+        # 验证 reasoning steps 已拼接到 plan（不再要求编号前缀）。
+        reasoning_steps = self.sample.get("reasoning_steps", [])
+        if reasoning_steps:
+            assert str(reasoning_steps[0]).strip() in formatted
 
     def test_load_and_process_dataset_builds_text_field(self):
         with tempfile.TemporaryDirectory() as tmpdir:
