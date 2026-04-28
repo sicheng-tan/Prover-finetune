@@ -9,7 +9,7 @@ from tqdm import tqdm
 from .config import ExperimentConfig
 from .lean_checker import LeanChecker
 from .minif2f import load_minif2f
-from .prover import build_prover_generator
+from .prover import LLMGenerationTimeoutError, build_prover_generator
 
 
 def _extract_theorem_block(problem: dict) -> str:
@@ -81,17 +81,44 @@ def main() -> None:
         logger.info("=" * 80)
         logger.info("Sample %d/%d | id=%s", row_idx, total_rows, sample_id)
         logger.info("Theorem block:\n%s", theorem_block)
-        pred_proofs = prover.generate_proofs(theorem_block, num_samples=pass_k)
-
         ok = False
         lean_log = ""
-        first_prediction = pred_proofs[0] if pred_proofs else ""
+        first_prediction = ""
         first_prediction_lean_code = ""
         first_extraction_mode = "none"
         candidates = []
-        for idx, pred_proof in enumerate(pred_proofs, start=1):
+        for idx in range(1, pass_k + 1):
             retries_used = idx - 1
             retries_remaining = max(0, pass_k - idx)
+            try:
+                pred_proof = prover.generate_proof(theorem_block)
+            except LLMGenerationTimeoutError as exc:
+                timeout_log = str(exc)
+                logger.warning(
+                    "Sample id=%s | attempt %d/%d | LLM timeout: %s",
+                    sample_id,
+                    idx,
+                    pass_k,
+                    timeout_log,
+                )
+                if idx == 1:
+                    first_prediction = ""
+                    first_prediction_lean_code = ""
+                    first_extraction_mode = "llm_timeout"
+                    lean_log = timeout_log
+                candidates.append(
+                    {
+                        "sample_idx": idx,
+                        "ok": False,
+                        "prediction": "",
+                        "prediction_lean_code": "",
+                        "extraction_mode": "llm_timeout",
+                        "lean_output": timeout_log,
+                    }
+                )
+                continue
+            if idx == 1:
+                first_prediction = pred_proof
             extracted_proof, extraction_mode = _extract_lean_code_from_generation(pred_proof)
             if idx == 1:
                 first_prediction_lean_code = extracted_proof

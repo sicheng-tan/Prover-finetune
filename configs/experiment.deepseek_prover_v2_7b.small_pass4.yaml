@@ -11,6 +11,7 @@ model:
   model_type: deepseek_prover_v2
   adapter_path: null
   device_map: auto
+  inference_timeout_sec: 180
   max_new_tokens: 4096
   temperature: 0.7
   top_p: 0.95

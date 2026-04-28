@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -149,6 +150,17 @@ class LeanChecker:
                 timeout=self.timeout_sec,
             )
             ok = proc.returncode == 0
+            # Treat Lean's "declaration uses 'sorry'" warning as failure.
+            # This avoids false positives from naive "sorry" substring matching.
+            has_sorry_warning = bool(
+                re.search(
+                    r"warning:.*declaration uses 'sorry'",
+                    proc.stdout or "",
+                    flags=re.IGNORECASE,
+                )
+            )
+            if has_sorry_warning:
+                ok = False
             return ok, proc.stdout
         except subprocess.TimeoutExpired as exc:
             timeout_log = (

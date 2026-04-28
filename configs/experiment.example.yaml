@@ -12,6 +12,7 @@ model:
   model_type: auto
   adapter_path: null
   device_map: auto
+  inference_timeout_sec: 120
   max_new_tokens: 256
   temperature: 0.2
   top_p: 0.9
