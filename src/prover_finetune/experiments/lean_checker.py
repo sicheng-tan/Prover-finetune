@@ -72,11 +72,38 @@ class LeanChecker:
     def _write_version_stamp(self) -> None:
         self._version_stamp_path().write_text(self._target_stamp(), encoding="utf-8")
 
+    def _mathlib_smoke_test_passes(self) -> bool:
+        smoke_file = self.project_dir / "Smoke.lean"
+        smoke_content = (
+            "import Mathlib\n\n"
+            "example : (1 : Nat) + 1 = 2 := by\n"
+            "  norm_num\n"
+        )
+        smoke_file.write_text(smoke_content, encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                [self.lake_exe, "env", "lean", str(smoke_file.name)],
+                cwd=self.project_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=self.timeout_sec,
+            )
+            return proc.returncode == 0
+        except (subprocess.SubprocessError, OSError):
+            return False
+
     def setup_project(self) -> None:
         self.project_dir.mkdir(parents=True, exist_ok=True)
 
         if self._version_is_already_configured():
             # Config matches local setup; skip rebuild workflow.
+            return
+
+        # Fast path: if a minimal Mathlib-dependent Lean file can be checked,
+        # the environment is already usable and rebuild can be skipped.
+        if self._mathlib_smoke_test_passes():
+            self._write_version_stamp()
             return
 
         toolchain = self.project_dir / "lean-toolchain"
