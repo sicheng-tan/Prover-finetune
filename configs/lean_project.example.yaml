@@ -1,9 +1,17 @@
 # Lean-interact verifier configuration (LocalProject mode).
-# Use a local mathlib4 project directory (recommended as git submodule).
+# Use a local mathlib4 directory prepared by scripts/setup_mathlib4.py.
 
-mathlib_path: mathlib4
+mathlib_path: external/mathlib4-v4.27.0
 lean_version: v4.27.0
 timeout_sec: 120
+
+# Config-driven mathlib setup (used by scripts/setup_mathlib4.py)
+mathlib_setup:
+  repo_url: https://github.com/leanprover-community/mathlib4.git
+  ref: v4.27.0
+  clone_root: external
+  # Final path will be: <repo_root>/<clone_root>/<dir_template.format(ref=ref)>
+  dir_template: mathlib4-{ref}
 
 # lean-interact server behavior
 use_lean_interact: true

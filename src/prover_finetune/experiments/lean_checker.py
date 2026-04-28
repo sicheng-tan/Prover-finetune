@@ -42,7 +42,7 @@ class LeanChecker:
         if not self.mathlib_path.exists():
             raise FileNotFoundError(
                 f"mathlib_path not found: {self.mathlib_path}. "
-                "Please initialize submodule and run lake manually."
+                "Please prepare this directory (e.g. via scripts/setup_mathlib4.py) and run lake manually."
             )
         toolchain_file = self.mathlib_path / "lean-toolchain"
         if toolchain_file.exists():

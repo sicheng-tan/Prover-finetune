@@ -64,14 +64,22 @@ pip install -r requirements.txt
 
 ## 工作流 A：miniF2F 实验评测
 
-### 0) 准备 mathlib4（推荐 git submodule）
+### 0) 准备 mathlib4（支持多版本并存）
 
 ```bash
-git submodule update --init --recursive
-cd mathlib4
-lake exe cache get
-lake build
-cd ..
+python scripts/setup_mathlib4.py \
+  --config configs/lean_project.example.yaml \
+  --sync-mathlib-path
+```
+
+目录名默认包含版本号（来自 `mathlib_setup.dir_template`，默认 `mathlib4-{ref}`），例如 `external/mathlib4-v4.27.0`。
+
+如果你要并存多个版本，可以复制一份 Lean 配置并改 `mathlib_setup.ref`：
+
+```bash
+cp configs/lean_project.example.yaml configs/lean_project.v4.28.0.yaml
+# 编辑 configs/lean_project.v4.28.0.yaml 中的 mathlib_setup.ref = v4.28.0
+python scripts/setup_mathlib4.py --config configs/lean_project.v4.28.0.yaml --sync-mathlib-path
 ```
 
 ### 1) 下载 miniF2F Lean 数据
@@ -122,7 +130,7 @@ python scripts/extract_minif2f_lean_to_json.py
 
 再编辑 `configs/lean_project.example.yaml`（参考 `test/lean_verifier.py` 用法）：
 
-- 本地工程路径：`mathlib_path`（例如 `mathlib4`）
+- 本地工程路径：`mathlib_path`（例如 `external/mathlib4-v4.27.0`）
 - Lean 版本：`lean_version`（默认 `v4.27.0`；若 `mathlib_path/lean-toolchain` 存在会自动读取该版本）
 - 运行时：`timeout_sec`
 - lean-interact 模式：`use_lean_interact`、`use_auto_server`、`memory_limit_mb`
@@ -262,7 +270,7 @@ python test/test_data_formatting.py
 - **`lake: command not found`**
   - 说明 Lean 工具链未安装或未加入 PATH，请先安装 `elan/lean`。
 - **验证器提示找不到 `mathlib_path`**
-  - 请先初始化子模块并在该目录执行 `lake build`。
+  - 请先运行 `scripts/setup_mathlib4.py`，并确认配置里的 `mathlib_path` 指向已构建目录。
 - **模型显存不足**
   - 可降低 `max_new_tokens`、换更小模型、启用 4bit 量化，或减小 batch。
 - **生成 proof 通过率低**
