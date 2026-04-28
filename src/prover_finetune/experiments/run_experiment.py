@@ -36,13 +36,21 @@ def _setup_logger(verbose_logging: bool) -> logging.Logger:
 
 
 def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
-    lean4_match = re.search(r"```lean4\b[^\n\r]*[\r]?\n(.*?)```", generation, flags=re.DOTALL | re.IGNORECASE)
-    if lean4_match:
-        return lean4_match.group(1).strip(), "lean4_fence"
+    lean4_matches = re.findall(
+        r"```lean4\b[^\n\r]*[\r]?\n(.*?)```",
+        generation,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if lean4_matches:
+        return lean4_matches[-1].strip(), "lean4_fence"
 
-    lean_match = re.search(r"```lean\b[^\n\r]*[\r]?\n(.*?)```", generation, flags=re.DOTALL | re.IGNORECASE)
-    if lean_match:
-        return lean_match.group(1).strip(), "lean_fence"
+    lean_matches = re.findall(
+        r"```lean\b[^\n\r]*[\r]?\n(.*?)```",
+        generation,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if lean_matches:
+        return lean_matches[-1].strip(), "lean_fence"
 
     return generation.strip(), "raw_fallback"
 

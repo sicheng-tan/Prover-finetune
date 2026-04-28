@@ -94,11 +94,7 @@ class ProverGenerator:
         )
 
     def _decode_generations(self, prompt: str, out: torch.Tensor) -> list[str]:
-        decoded = self.tokenizer.batch_decode(
-            out,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True,
-        )
+        decoded = self.tokenizer.batch_decode(out)
         texts: list[str] = []
         for text in decoded:
             texts.append(text[len(prompt) :].strip() if text.startswith(prompt) else text.strip())
@@ -106,11 +102,7 @@ class ProverGenerator:
 
     def _decode_generations_from_input_len(self, out: torch.Tensor, input_len: int) -> list[str]:
         continuation = out[:, input_len:]
-        decoded = self.tokenizer.batch_decode(
-            continuation,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True,
-        )
+        decoded = self.tokenizer.batch_decode(continuation)
         return [text.strip() for text in decoded]
 
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
