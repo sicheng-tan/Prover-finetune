@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 
 from tqdm import tqdm
@@ -25,6 +26,12 @@ def _extract_theorem_block(problem: dict) -> str:
 
 def _setup_logger(verbose_logging: bool) -> logging.Logger:
     logger = logging.getLogger("prover_finetune.experiments")
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            # Keep default stream settings if runtime does not support reconfigure.
+            pass
     if not logger.handlers:
         handler = logging.StreamHandler()
         formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
@@ -33,6 +40,17 @@ def _setup_logger(verbose_logging: bool) -> logging.Logger:
     logger.setLevel(logging.INFO if verbose_logging else logging.WARNING)
     logger.propagate = False
     return logger
+
+
+def _attach_file_logger(logger: logging.Logger, output_dir: Path) -> None:
+    log_path = output_dir / "experiment.log"
+    target = str(log_path.resolve())
+    for h in logger.handlers:
+        if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == target:
+            return
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s"))
+    logger.addHandler(file_handler)
 
 
 def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
@@ -72,6 +90,7 @@ def main() -> None:
     max_samples = exp_cfg.get("max_samples")
     output_dir = Path(exp_cfg.get("output_dir", "outputs/experiments/default"))
     output_dir.mkdir(parents=True, exist_ok=True)
+    _attach_file_logger(logger, output_dir)
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
     prover = build_prover_generator(model_cfg)
@@ -87,8 +106,11 @@ def main() -> None:
         theorem_block = _extract_theorem_block(row)
         sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
         logger.info("=" * 80)
-        logger.info("Sample %d/%d | id=%s", row_idx, total_rows, sample_id)
-        logger.info("Theorem block:\n%s", theorem_block)
+        logger.info("SAMPLE %d/%d - id=%s", row_idx, total_rows, sample_id)
+        logger.info("-" * 80)
+        logger.info("THEOREM BLOCK:")
+        logger.info("%s", theorem_block)
+        logger.info("=" * 80)
         ok = False
         lean_log = ""
         first_prediction = ""
@@ -98,12 +120,25 @@ def main() -> None:
         for idx in range(1, pass_k + 1):
             retries_used = idx - 1
             retries_remaining = max(0, pass_k - idx)
+            logger.info("=" * 80)
+            logger.info(
+                "ATTEMPT %d/%d - GENERATION",
+                idx,
+                pass_k,
+            )
+            logger.info("-" * 80)
+            logger.info(
+                "Sample id=%s | retries_used=%d | retries_remaining=%d",
+                sample_id,
+                retries_used,
+                retries_remaining,
+            )
             try:
                 pred_proof = prover.generate_proof(theorem_block)
             except LLMGenerationTimeoutError as exc:
                 timeout_log = str(exc)
                 logger.warning(
-                    "Sample id=%s | attempt %d/%d | LLM timeout: %s",
+                    "LLM generation timeout (sample id=%s, attempt %d/%d): %s",
                     sample_id,
                     idx,
                     pass_k,
@@ -124,6 +159,7 @@ def main() -> None:
                         "lean_output": timeout_log,
                     }
                 )
+                logger.info("=" * 80)
                 continue
             if idx == 1:
                 first_prediction = pred_proof
@@ -131,28 +167,26 @@ def main() -> None:
             if idx == 1:
                 first_prediction_lean_code = extracted_proof
                 first_extraction_mode = extraction_mode
+            logger.info("RAW MODEL OUTPUT:")
+            logger.info("%s", pred_proof)
+            logger.info("-" * 80)
+            logger.info("EXTRACTED LEAN CODE (mode=%s):", extraction_mode)
+            logger.info("%s", extracted_proof)
+            logger.info("=" * 80)
+            logger.info("ATTEMPT %d/%d - LEAN VERIFICATION", idx, pass_k)
+            logger.info("-" * 80)
             logger.info(
-                "Sample id=%s | attempt %d/%d | retries_used=%d | retries_remaining=%d",
+                "Verifying generated code with Lean compiler... (sample id=%s, attempt %d/%d)",
                 sample_id,
                 idx,
                 pass_k,
-                retries_used,
-                retries_remaining,
-            )
-            logger.info("Full LLM generation (attempt %d):\n%s", idx, pred_proof)
-            logger.info(
-                "Lean code extraction (attempt %d): mode=%s\nExtracted Lean code:\n%s",
-                idx,
-                extraction_mode,
-                extracted_proof,
             )
             cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
-            logger.info(
-                "Lean check result (attempt %d): ok=%s\nLean output:\n%s",
-                idx,
-                cur_ok,
-                cur_log,
-            )
+            logger.info("LEAN OUTPUT:")
+            logger.info("%s", cur_log)
+            logger.info("-" * 80)
+            logger.info("LEAN CHECK RESULT: ok=%s", cur_ok)
+            logger.info("=" * 80)
             candidates.append(
                 {
                     "sample_idx": idx,
@@ -167,12 +201,13 @@ def main() -> None:
                 ok = True
                 lean_log = cur_log
                 logger.info(
-                    "Sample id=%s solved at attempt %d/%d (retries_used=%d).",
+                    "SUCCESS - sample id=%s solved at attempt %d/%d (retries_used=%d).",
                     sample_id,
                     idx,
                     pass_k,
                     retries_used,
                 )
+                logger.info("=" * 80)
                 break
             # Keep the first failure log for easier debugging.
             if idx == 1:
@@ -181,11 +216,12 @@ def main() -> None:
         num_pass += int(ok)
         if not ok:
             logger.info(
-                "Sample id=%s failed after %d attempts (retries_used=%d).",
+                "FAILED - sample id=%s after %d attempts (retries_used=%d).",
                 sample_id,
                 pass_k,
                 max(0, pass_k - 1),
             )
+            logger.info("=" * 80)
         results.append(
             {
                 "id": sample_id,
