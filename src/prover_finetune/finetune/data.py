@@ -57,9 +57,14 @@ def _format_deepseek_prover_v2_example(row: dict[str, Any], data_cfg: dict[str, 
     formal_proof = str(row.get(proof_field, "")).strip()
 
     if reasoning_steps:
-        plan_lines = "\n".join([f"{idx}. {step}" for idx, step in enumerate(reasoning_steps, start=1)])
+        # Keep original comment content/linebreak style; do not add numbering prefixes.
+        plan_lines = "\n".join(reasoning_steps)
     else:
-        plan_lines = "1. Introduce the goal and key assumptions.\n2. Apply intermediate lemmas to transform the target.\n3. Close the goal with algebraic/simp tactics."
+        plan_lines = (
+            "Introduce the goal and key assumptions.\n"
+            "Apply intermediate lemmas to transform the target.\n"
+            "Close the goal with algebraic/simp tactics."
+        )
 
     assistant_completion = (
         "Proof plan:\n"
