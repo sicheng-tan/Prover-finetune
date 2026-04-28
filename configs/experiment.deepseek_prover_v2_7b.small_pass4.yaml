@@ -1,10 +1,10 @@
 experiment:
-  name: minif2f-deepseek-prover-v2-7b-pass16
+  name: minif2f-deepseek-prover-v2-7b-smoke-pass4
   split: test
-  max_samples: null
-  pass_k: 16
+  max_samples: 2
+  pass_k: 4
   verbose_logging: true
-  output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-pass16
+  output_dir: outputs/experiments/minif2f-deepseek-prover-v2-7b-smoke-pass4
 
 model:
   name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
