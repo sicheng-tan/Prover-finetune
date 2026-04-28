@@ -93,37 +93,25 @@ class ProverGenerator:
             "-- proof:"
         )
 
-    @staticmethod
-    def _normalize_decoded_text(text: str) -> str:
-        # Some tokenizers may leak GPT2-style visible markers on decode.
-        # Normalize only when those markers clearly appear in the output.
-        if "Ġ" in text or "Ċ" in text:
-            return text.replace("Ġ", " ").replace("Ċ", "\n")
-        return text
-
     def _decode_generations(self, prompt: str, out: torch.Tensor) -> list[str]:
+        decoded = self.tokenizer.batch_decode(
+            out,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
         texts: list[str] = []
-        for seq in out:
-            text = self.tokenizer.decode(
-                seq,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True,
-            )
-            text = self._normalize_decoded_text(text)
+        for text in decoded:
             texts.append(text[len(prompt) :].strip() if text.startswith(prompt) else text.strip())
         return texts
 
     def _decode_generations_from_input_len(self, out: torch.Tensor, input_len: int) -> list[str]:
-        texts: list[str] = []
-        for seq in out:
-            continuation = seq[input_len:]
-            text = self.tokenizer.decode(
-                continuation,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True,
-            )
-            texts.append(self._normalize_decoded_text(text).strip())
-        return texts
+        continuation = out[:, input_len:]
+        decoded = self.tokenizer.batch_decode(
+            continuation,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        return [text.strip() for text in decoded]
 
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
@@ -167,7 +155,6 @@ class DeepSeekProverV2Generator(ProverGenerator):
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_cfg["name_or_path"],
-            use_fast=False,
             trust_remote_code=True,
         )
         if self.tokenizer.pad_token is None:
