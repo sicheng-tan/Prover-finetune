@@ -121,7 +121,6 @@ curl --request POST \
 ```bash
 python scripts/setup_mathlib4.py \
   --config configs/lean_project.example.yaml \
-  --sync-mathlib-path
 ```
 
 目录名默认包含版本号（来自 `mathlib_setup.dir_template`，默认 `mathlib4-{ref}`），例如 `external/mathlib4-v4.27.0`。
@@ -258,7 +257,7 @@ python -m src.prover_finetune.experiments.run_experiment \
 ### 2) 启动训练
 
 ```bash
-python -m src.prover_finetune.finetune.train_qlora --config configs/finetune.example.yaml
+CUDA_VISIBLE_DEVICES=1 python -m src.prover_finetune.finetune.train_qlora --config configs/finetune.example.yaml
 ```
 
 训练完成后会将 adapter 与 tokenizer 保存到：
