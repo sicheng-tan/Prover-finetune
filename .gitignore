@@ -6,6 +6,10 @@ data/**
 !data/processed/
 !data/processed/**
 
+# Ignore large processed training files
+data/processed/numinamath_lean_filtered_train.jsonl
+data/processed/numinamath_lean_reasoning_train.jsonl
+
 # Python cache files
 __pycache__/
 *.pyc
