@@ -72,8 +72,8 @@ docker run -d \
   --restart unless-stopped \
   -p 8000:8000 \
   -e LEAN_SERVER_LEAN_VERSION=v4.27.0\
-  -e LEAN_SERVER_REPL_PATH= \
-  -e LEAN_SERVER_PROJECT_DIR= \
+  -e LEAN_SERVER_REPL_PATH=/pub/data/tansc/kimina-lean-server/repl/.lake/build/bin/repl \
+  -e LEAN_SERVER_PROJECT_DIR=/pub/data/tansc/kimina-lean-server/mathlib4 \
   -e LEAN_SERVER_MAX_REPLS=16 \
   -e LEAN_SERVER_MAX_WAIT=30 \
   -e LEAN_SERVER_MAX_REPL_MEM=8G \
@@ -87,8 +87,8 @@ docker run -d \
 export LEAN_SERVER_HOST=0.0.0.0 
 export LEAN_SERVER_PORT=8000 
 export LEAN_SERVER_LEAN_VERSION=v4.27.0 
-export LEAN_SERVER_REPL_PATH=repl/.lake/build/bin/repl 
-export LEAN_SERVER_PROJECT_DIR=mathlib4
+export LEAN_SERVER_REPL_PATH=/pub/data/tansc/kimina-lean-server/repl/.lake/build/bin/repl
+export LEAN_SERVER_PROJECT_DIR=/pub/data/tansc/kimina-lean-server/mathlib4
 export LEAN_SERVER_MAX_REPLS=16
 export LEAN_SERVER_MAX_WAIT=30
 export LEAN_SERVER_MAX_REPL_MEM=8G

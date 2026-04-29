@@ -25,7 +25,7 @@ kimina_api_url: http://localhost:8000
 kimina_api_key: null
 kimina_http_timeout: 240
 kimina_reuse: true
-kimina_debug: true
+kimina_debug: false
 
 # lean-interact fallback behavior
 use_lean_interact: true
