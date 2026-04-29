@@ -327,28 +327,11 @@ def _run_worker(
     lean_cfg: dict,
     problem_log_dir: Path,
     logger: logging.Logger,
-    load_state: dict,
     progress_state: dict,
-    start_barrier: threading.Barrier,
+    prover,
+    checker,
 ) -> list[tuple[int, dict, int]]:
-    worker_model_cfg = copy.deepcopy(model_cfg)
-    worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
-    prover = build_prover_generator(worker_model_cfg)
-    with load_state["lock"]:
-        load_state["loaded"] += 1
-        logger.info("GPU %s model loaded.", gpu_id)
-        if load_state["loaded"] == load_state["total"]:
-            logger.info("All worker models have finished loading. Start task dispatch.")
-    try:
-        start_barrier.wait(timeout=900)
-    except threading.BrokenBarrierError as exc:
-        raise RuntimeError("Worker start barrier broken before task dispatch.") from exc
-
-    worker_lean_cfg = copy.deepcopy(lean_cfg)
-    base_project_dir = worker_lean_cfg.get("project_dir", ".lean_runner")
-    worker_lean_cfg["project_dir"] = f"{base_project_dir}_worker_{worker_idx}"
-    checker = LeanChecker(worker_lean_cfg)
-    checker.setup_project()
+    del model_cfg, lean_cfg
 
     out: list[tuple[int, dict, int]] = []
     while True:
@@ -441,21 +424,39 @@ def main() -> None:
         task_queue.put(item)
 
     packed_results: list[tuple[int, dict, int]] = []
-    load_state = {"loaded": 0, "total": worker_count, "lock": threading.Lock()}
     progress_state = {"done": 0, "total": total_rows, "lock": threading.Lock()}
-    start_barrier = threading.Barrier(worker_count)
+    worker_resources: list[tuple[int, object, LeanChecker]] = []
     logger.info(
         "Starting dynamic parallel run: total_samples=%d, workers=%d, gpus=%s",
         total_rows,
         worker_count,
         gpu_ids,
     )
+    logger.info("Start serial model loading for %d workers.", worker_count)
+    for i in range(worker_count):
+        gpu_id = gpu_ids[i]
+        worker_model_cfg = copy.deepcopy(model_cfg)
+        worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
+        logger.info("Loading model on GPU %s (%d/%d)...", gpu_id, i + 1, worker_count)
+        load_start = time.perf_counter()
+        prover = build_prover_generator(worker_model_cfg)
+        load_ms = int((time.perf_counter() - load_start) * 1000)
+        logger.info("GPU %s model loaded in %d ms.", gpu_id, load_ms)
+
+        worker_lean_cfg = copy.deepcopy(lean_cfg)
+        base_project_dir = worker_lean_cfg.get("project_dir", ".lean_runner")
+        worker_lean_cfg["project_dir"] = f"{base_project_dir}_worker_{i}"
+        checker = LeanChecker(worker_lean_cfg)
+        checker.setup_project()
+        worker_resources.append((gpu_id, prover, checker))
+    logger.info("All worker models loaded. Start task dispatch.")
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [
             executor.submit(
                 _run_worker,
                 worker_idx=i,
-                gpu_id=gpu_ids[i],
+                gpu_id=worker_resources[i][0],
                 task_queue=task_queue,
                 total_rows=total_rows,
                 pass_k=pass_k,
@@ -463,9 +464,9 @@ def main() -> None:
                 lean_cfg=lean_cfg,
                 problem_log_dir=problem_log_dir,
                 logger=logger,
-                load_state=load_state,
                 progress_state=progress_state,
-                start_barrier=start_barrier,
+                prover=worker_resources[i][1],
+                checker=worker_resources[i][2],
             )
             for i in range(worker_count)
         ]
