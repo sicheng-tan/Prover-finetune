@@ -109,6 +109,15 @@ class ProverGenerator:
         criterion = _WallClockStoppingCriteria(int(timeout_sec))
         return StoppingCriteriaList([criterion]), criterion
 
+    def _build_max_time(self) -> float | None:
+        timeout_sec = self.inference_timeout_sec
+        if timeout_sec is None:
+            return None
+        timeout = float(timeout_sec)
+        if timeout <= 0:
+            return None
+        return timeout
+
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
@@ -118,6 +127,7 @@ class ProverGenerator:
         use_sampling = self.do_sample or want_samples > 1
         input_len = int(inputs["input_ids"].shape[-1])
         stopping_criteria, timeout_criterion = self._build_stopping_criteria()
+        max_time = self._build_max_time()
         with torch.no_grad():
             out = self.model.generate(
                 **inputs,
@@ -128,6 +138,7 @@ class ProverGenerator:
                 pad_token_id=self.tokenizer.eos_token_id,
                 num_return_sequences=want_samples,
                 stopping_criteria=stopping_criteria,
+                max_time=max_time,
             )
         if timeout_criterion is not None and timeout_criterion.triggered:
             raise LLMGenerationTimeoutError(
@@ -203,6 +214,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         stopping_criteria, timeout_criterion = self._build_stopping_criteria()
+        max_time = self._build_max_time()
         with torch.no_grad():
             out = self.model.generate(
                 **model_inputs,
@@ -213,6 +225,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
                 pad_token_id=self.tokenizer.eos_token_id,
                 num_return_sequences=want_samples,
                 stopping_criteria=stopping_criteria,
+                max_time=max_time,
             )
         if timeout_criterion is not None and timeout_criterion.triggered:
             raise LLMGenerationTimeoutError(

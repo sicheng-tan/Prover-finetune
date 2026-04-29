@@ -14,8 +14,6 @@ from pathlib import Path
 
 import torch
 import yaml
-from tqdm import tqdm
-
 from .config import ExperimentConfig
 from .lean_checker import LeanChecker
 from .minif2f import load_minif2f
@@ -470,7 +468,7 @@ def main() -> None:
             )
             for i in range(worker_count)
         ]
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
+        for future in concurrent.futures.as_completed(futures):
             packed_results.extend(future.result())
 
     packed_results.sort(key=lambda x: x[0])
