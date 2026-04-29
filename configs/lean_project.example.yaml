@@ -33,14 +33,15 @@ use_auto_server: false
 memory_limit_mb: 16384
 lean_interact_verbose: true
 
-# Header used in Main.lean for proof checking.
+# Header prepended during verification only (not part of model prompt).
+# Keep this minimal for Kimina stability: usually just `import Mathlib`.
 header_imports:
   - Mathlib
 header_set_options:
   - maxHeartbeats 0
-header_open_scopes:
-  - BigOperators
-  - Real
-  - Nat
-  - Topology
-  - Rat
+# `open <namespace ...>` (default empty; add only when strictly needed)
+header_open_namespaces: []
+
+# `open scoped <scope ...>` (default empty; scope and namespace differ)
+# Example when needed: [BigOperators]
+header_open_scoped: []

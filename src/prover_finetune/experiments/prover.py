@@ -169,6 +169,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
             add_generation_prompt=True,
             return_tensors="pt",
         ).to(self.model.device)
+        input_len = int(inputs.shape[-1])
 
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
@@ -183,7 +184,8 @@ class DeepSeekProverV2Generator(ProverGenerator):
                     pad_token_id=self.tokenizer.eos_token_id,
                     num_return_sequences=want_samples,
                 )
-        return [text.strip() for text in self.tokenizer.batch_decode(out)]
+        continuations = out[:, input_len:]
+        return [text.strip() for text in self.tokenizer.batch_decode(continuations)]
 
 
 def build_prover_generator(model_cfg: dict) -> ProverGenerator:
