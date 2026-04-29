@@ -332,11 +332,25 @@ def _run_worker(
     del model_cfg, lean_cfg
 
     out: list[tuple[int, dict, int]] = []
+    logger.info("[dispatch] worker=%d gpu=%s started.", worker_idx, gpu_id)
     while True:
         try:
             row_idx, row = task_queue.get_nowait()
         except queue.Empty:
             break
+        sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
+        try:
+            remaining = task_queue.qsize()
+        except Exception:
+            remaining = -1
+        logger.info(
+            "[dispatch] worker=%d gpu=%s got sample=%s (row_idx=%d, approx_remaining=%d)",
+            worker_idx,
+            gpu_id,
+            sample_id,
+            row_idx,
+            remaining,
+        )
         result, ok_int, logs = _process_one_problem(row_idx, total_rows, row, pass_k, prover, checker)
         log_name_raw = row.get("name") or row.get("id") or f"sample_{row_idx}"
         safe_name = str(log_name_raw).replace("/", "_")
@@ -357,6 +371,7 @@ def _run_worker(
                 result.get("total_generation_ms", "-"),
                 result.get("total_verify_ms", "-"),
             )
+    logger.info("[dispatch] worker=%d gpu=%s finished. processed=%d", worker_idx, gpu_id, len(out))
     return out
 
 
