@@ -1,5 +1,6 @@
-# Lean-interact verifier configuration (LocalProject mode).
-# Use a local mathlib4 directory prepared by scripts/setup_mathlib4.py.
+# Lean verifier configuration.
+# Default backend is Kimina server for high-concurrency proof checking.
+# Keep lean-interact options as local fallback.
 
 mathlib_path: external/mathlib4-v4.27.0
 lean_version: v4.27.0
@@ -13,9 +14,22 @@ mathlib_setup:
   # Final path will be: <repo_root>/<clone_root>/<dir_template.format(ref=ref)>
   dir_template: mathlib4-{ref}
 
-# lean-interact server behavior
+# Choose verifier backend: kimina | lean_interact | auto
+# - kimina: use kimina-lean-server client
+# - lean_interact: use local lean-interact
+# - auto: try kimina first, then fallback to lean-interact
+verifier_backend: kimina
+
+# kimina-lean-server client options
+kimina_api_url: http://localhost:8000
+kimina_api_key: null
+kimina_http_timeout: 600
+kimina_reuse: true
+kimina_debug: false
+
+# lean-interact fallback behavior
 use_lean_interact: true
-use_auto_server: true
+use_auto_server: false
 memory_limit_mb: 16384
 lean_interact_verbose: true
 

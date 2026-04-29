@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "lean-interact>=0.9.0",
+    "kimina-client",
 ]
 
 [tool.setuptools]

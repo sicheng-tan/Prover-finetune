@@ -8,6 +8,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -139,6 +140,8 @@ def _process_one_problem(
     first_prediction = ""
     first_prediction_lean_code = ""
     first_extraction_mode = "none"
+    last_generation_ms = 0
+    last_verify_ms = 0
     candidates = []
 
     for idx in range(1, pass_k + 1):
@@ -151,11 +154,16 @@ def _process_one_problem(
             logs,
             f"Sample id={sample_id} | retries_used={retries_used} | retries_remaining={retries_remaining}",
         )
+        gen_start = time.perf_counter()
         try:
             pred_proof = prover.generate_proof(theorem_block)
         except LLMGenerationTimeoutError as exc:
             timeout_log = str(exc)
+            generation_ms = int((time.perf_counter() - gen_start) * 1000)
+            last_generation_ms = generation_ms
+            last_verify_ms = 0
             _append(logs, f"LLM generation timeout: {timeout_log}")
+            _append(logs, f"TIMING: generation_ms={generation_ms}, verify_ms=0")
             if idx == 1:
                 first_extraction_mode = "llm_timeout"
                 lean_log = timeout_log
@@ -167,10 +175,14 @@ def _process_one_problem(
                     "prediction_lean_code": "",
                     "extraction_mode": "llm_timeout",
                     "lean_output": timeout_log,
+                    "generation_ms": generation_ms,
+                    "verify_ms": 0,
                 }
             )
             _append(logs, "=" * 80)
             continue
+        generation_ms = int((time.perf_counter() - gen_start) * 1000)
+        last_generation_ms = generation_ms
 
         if idx == 1:
             first_prediction = pred_proof
@@ -187,11 +199,15 @@ def _process_one_problem(
         _append(logs, "=" * 80)
         _append(logs, f"ATTEMPT {idx}/{pass_k} - LEAN VERIFICATION")
         _append(logs, "-" * 80)
+        verify_start = time.perf_counter()
         cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
+        verify_ms = int((time.perf_counter() - verify_start) * 1000)
+        last_verify_ms = verify_ms
         _append(logs, "LEAN OUTPUT:")
         _append(logs, cur_log)
         _append(logs, "-" * 80)
         _append(logs, f"LEAN CHECK RESULT: ok={cur_ok}")
+        _append(logs, f"TIMING: generation_ms={generation_ms}, verify_ms={verify_ms}")
         _append(logs, "=" * 80)
 
         candidates.append(
@@ -202,6 +218,8 @@ def _process_one_problem(
                 "prediction_lean_code": extracted_proof,
                 "extraction_mode": extraction_mode,
                 "lean_output": cur_log,
+                "generation_ms": generation_ms,
+                "verify_ms": verify_ms,
             }
         )
         if cur_ok:
@@ -230,6 +248,8 @@ def _process_one_problem(
         "prediction_lean_code": first_prediction_lean_code,
         "extraction_mode": first_extraction_mode,
         "lean_output": lean_log,
+        "last_generation_ms": last_generation_ms,
+        "last_verify_ms": last_verify_ms,
         "pass_k": pass_k,
         "candidates": candidates,
     }
@@ -281,12 +301,14 @@ def _run_worker(
             total = progress_state["total"]
             status = "PASS" if ok_int else "FAIL"
             logger.info(
-                "[progress] %d/%d | gpu=%s | sample=%s | %s",
+                "[progress] %d/%d | gpu=%s | sample=%s | %s | gen_ms=%s | verify_ms=%s",
                 done,
                 total,
                 gpu_id,
                 result["id"],
                 status,
+                result.get("last_generation_ms", "-"),
+                result.get("last_verify_ms", "-"),
             )
     return out
 

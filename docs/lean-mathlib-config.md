@@ -1,55 +1,71 @@
-# Lean + Mathlib Configuration Guide
+# Lean + Mathlib Verifier Configuration
 
-This project already supports dynamic Lean and Mathlib version configuration.
+This project supports two Lean verification backends:
 
-The implementation is in:
+- `kimina` (recommended): remote/local `kimina-lean-server` for high-concurrency proof checking.
+- `lean_interact`: local `lean-interact` server as fallback.
 
-- `src/prover_finetune/experiments/lean_checker.py`
+The implementation is in `src/prover_finetune/experiments/lean_checker.py`.
 
-## How It Works
+## Recommended: Kimina Backend
 
-At runtime, `LeanChecker.setup_project()` will:
-
-1. Create a Lean runner project directory (`lean.project_dir`).
-2. Write `lean-toolchain` from `lean.lean_version`.
-3. Write `lakefile.lean` with Mathlib git dependency pinned by `lean.mathlib_ref`.
-4. Run `lake update` to fetch dependencies for the selected versions.
-
-Then each generated proof is checked by:
-
-- `lake env lean Main.lean`
-
-## Config Fields
-
-In your experiment config (for example `configs/experiment.example.yaml`), use:
+Set `lean.project_config_path` to a yaml file (for example `configs/lean_project.example.yaml`) and use:
 
 ```yaml
 lean:
-  project_dir: .lean_runner
-  lean_version: leanprover/lean4:v4.11.0
-  mathlib_ref: v4.11.0
-  timeout_sec: 30
-  lake_exe: lake
+  project_config_path: configs/lean_project.example.yaml
 ```
 
-### Field Meanings
+Example verifier config:
 
-- `project_dir`: working Lean project for verification files.
-- `lean_version`: toolchain string written into `lean-toolchain`.
-- `mathlib_ref`: branch/tag/commit used in `lakefile.lean`.
-- `timeout_sec`: timeout for a single Lean check.
-- `lake_exe`: `lake` executable name/path.
+```yaml
+mathlib_path: external/mathlib4-v4.27.0
+timeout_sec: 120
+verifier_backend: kimina
 
-## Change Versions
+kimina_api_url: http://localhost:8000
+kimina_api_key: null
+kimina_http_timeout: 600
+kimina_reuse: true
+kimina_debug: false
 
-Just change `lean.lean_version` and `lean.mathlib_ref` in your config and rerun:
+use_lean_interact: true
+```
+
+### Kimina setup
+
+Follow the official repository: [project-numina/kimina-lean-server](https://github.com/project-numina/kimina-lean-server).
+
+Typical local startup:
 
 ```bash
-python -m src.prover_finetune.experiments.run_experiment --config configs/experiment.example.yaml
+docker run -d \
+  --name kimina-server \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  projectnumina/kimina-lean-server:2.0.0
 ```
 
-## Compatibility Notes
+Then verify server health via client or API before running experiments.
 
-- Lean and Mathlib versions should be compatible with each other.
-- If `lake update` fails, first check version compatibility and local Lean toolchain availability.
-- You can use a commit hash for `mathlib_ref` for stricter reproducibility.
+## Fallback: lean-interact Backend
+
+If Kimina is unavailable, set:
+
+```yaml
+verifier_backend: lean_interact
+```
+
+Or:
+
+```yaml
+verifier_backend: auto
+```
+
+`auto` first tries Kimina and falls back to `lean-interact` when Kimina client is unavailable.
+
+## Notes
+
+- `mathlib_path` should point to a prepared mathlib4 directory.
+- Keep Lean / mathlib versions consistent between your local project and the Kimina server image.
+- `kimina_reuse: true` usually improves throughput by reusing warm REPL state.

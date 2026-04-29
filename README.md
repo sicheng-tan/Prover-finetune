@@ -13,7 +13,7 @@
 - **miniF2F 实验评测**：支持从 `json` / `jsonl` / Lean 文件目录加载题目。
 - **pass@k 评测**：单题可采样多个 proof 候选，任一通过 Lean 校验即记为通过。
 - **模型模板自适应**：支持 `model_type` 自动识别，内置 DeepSeek-Prover-V2 专用提示模板。
-- **LeanInteract 本地工程验证**：按本地 `mathlib4` 工程路径加载（`LocalProject`），不在代码中动态改写 Lean 工程。
+- **Lean 验证器双后端**：支持 `kimina-lean-server`（高并发，推荐）和 `lean-interact`（本地回退）。
 
 ---
 
@@ -59,6 +59,43 @@ pip install -r requirements.txt
 
 请确保系统可执行 `lake` 命令（通常通过 `elan` 安装 Lean 工具链后可用）。  
 本项目不再在代码中自动构建 Lean 工程，请先准备本地 `mathlib4` 目录（推荐子模块）并手动执行 `lake`。
+
+### 3) Kimina Lean Server（推荐）
+
+项目已支持通过 `KiminaClient` 调用 `kimina-lean-server` 进行高并发 Lean 验证。
+
+先启动 server（示例）：
+
+```bash
+docker run -d \
+  --name kimina-server \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -e LEAN_SERVER_LEAN_VERSION=v4.27.0\
+  -e LEAN_SERVER_REPL_PATH= \
+  -e LEAN_SERVER_PROJECT_DIR= \
+  -e LEAN_SERVER_MAX_REPLS=16 \
+  -e LEAN_SERVER_MAX_WAIT=120 \
+  -e LEAN_SERVER_MAX_REPL_MEM=32G \
+  -e LEAN_SERVER_MAX_REPL_USES=8G \
+  projectnumina/kimina-lean-server:2.0.0
+```
+
+验证服务是否可用（示例）：
+
+```bash
+curl --request POST \
+  --url http://localhost:8000/verify \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "codes": [
+      {"custom_id": "healthcheck", "proof": "#check Nat"}
+    ],
+    "infotree_type": "original"
+  }'
+```
+
+> 说明：本项目代码不会自动拉起 Kimina server，只会请求 `kimina_api_url` 指定的已有服务。
 
 ---
 
@@ -129,12 +166,14 @@ python scripts/extract_minif2f_lean_to_json.py
 - `lean`
   - `project_config_path`: 指向 `configs/lean_project.example.yaml`
 
-再编辑 `configs/lean_project.example.yaml`（参考 `test/lean_verifier.py` 用法）：
+再编辑 `configs/lean_project.example.yaml`：
 
 - 本地工程路径：`mathlib_path`（例如 `external/mathlib4-v4.27.0`）
 - Lean 版本：`lean_version`（默认 `v4.27.0`；若 `mathlib_path/lean-toolchain` 存在会自动读取该版本）
 - 运行时：`timeout_sec`
-- lean-interact 模式：`use_lean_interact`、`use_auto_server`、`memory_limit_mb`
+- 验证后端：`verifier_backend`（`kimina` / `lean_interact` / `auto`）
+- Kimina 参数：`kimina_api_url`、`kimina_api_key`、`kimina_http_timeout`、`kimina_reuse`
+- lean-interact 回退：`use_lean_interact`、`use_auto_server`、`memory_limit_mb`
 - 校验头部：`header_imports`、`header_set_options`、`header_open_scopes`
 
 ### 4) 运行实验
@@ -156,6 +195,7 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
 
 - 会按 `gpu_ids` 长度启动同等数量线程（每线程绑定一个 GPU）。
 - 每线程独立初始化 prover 与 Lean checker，避免 `Main.lean` 互相覆盖。
+- 当 `verifier_backend=kimina` 时，多个 worker 会并发请求同一个 Kimina server（由 server 的 REPL 池并行处理）。
 - 若 `gpu_ids` 包含不可见设备编号，程序会在启动时直接报错。
 
 `results.json` 中每条样本会记录：
@@ -290,6 +330,6 @@ python test/test_data_formatting.py
 ## 备注
 
 - `miniF2F` 加载器默认会按 `split` 过滤；若数据行不含 `split` 字段，会直接纳入当前评测集合。
-- Lean 校验时会将 theorem 与模型生成 proof 写入 `Main.lean` 并执行 `lake env lean Main.lean`。
+- Lean 校验默认走 Kimina server（HTTP API）；若配置 `lean_interact`，则走本地 `lean-interact`。
 - `.gitignore` 默认忽略 `data/**`，但保留 `data/processed/**` 便于版本化关键处理结果。
 - 详细 Lean/Mathlib 版本管理可参考 `docs/lean-mathlib-config.md`（若你本地已维护该文档）。

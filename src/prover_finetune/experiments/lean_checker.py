@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -11,6 +12,13 @@ except Exception:  # pragma: no cover - optional runtime dependency
     LeanREPLConfig = None
     LeanServer = None
     LocalProject = None
+
+try:
+    from kimina_client import KiminaClient, Snippet, SnippetStatus
+except Exception:  # pragma: no cover - optional runtime dependency
+    KiminaClient = None
+    Snippet = None
+    SnippetStatus = None
 
 
 class LeanChecker:
@@ -36,7 +44,14 @@ class LeanChecker:
         self.use_lean_interact = bool(merged_cfg.get("use_lean_interact", True))
         self.memory_limit_mb = merged_cfg.get("memory_limit_mb")
         self.lean_interact_verbose = bool(merged_cfg.get("lean_interact_verbose", False))
+        self.verifier_backend = str(merged_cfg.get("verifier_backend", "kimina")).lower()
+        self.kimina_api_url = str(merged_cfg.get("kimina_api_url", "http://localhost:8000"))
+        self.kimina_api_key = merged_cfg.get("kimina_api_key")
+        self.kimina_http_timeout = int(merged_cfg.get("kimina_http_timeout", 600))
+        self.kimina_reuse = bool(merged_cfg.get("kimina_reuse", True))
+        self.kimina_debug = bool(merged_cfg.get("kimina_debug", False))
         self._lean_server = None
+        self._kimina_client = None
 
     def setup_project(self) -> None:
         if not self.mathlib_path.exists():
@@ -155,7 +170,109 @@ class LeanChecker:
         except Exception as exc:
             return False, f"lean-interact verification error: {exc}"
 
+    def _init_kimina_client(self) -> bool:
+        if self._kimina_client is not None:
+            return True
+        if KiminaClient is None:
+            return False
+        try:
+            self._kimina_client = KiminaClient(
+                api_url=self.kimina_api_url,
+                api_key=self.kimina_api_key,
+                http_timeout=self.kimina_http_timeout,
+            )
+            return True
+        except Exception:
+            self._kimina_client = None
+            return False
+
+    def _collect_kimina_output_lines(self, result: Any) -> list[str]:
+        out: list[str] = []
+        if getattr(result, "error", None):
+            out.append(f"Server error: {result.error}")
+            return out
+
+        response = getattr(result, "response", None)
+        if response is None:
+            out.append("Empty response from Kimina server.")
+            return out
+        if isinstance(response, dict) and response.get("message"):
+            out.append(f"REPL error: {response.get('message')}")
+            return out
+
+        messages = response.get("messages", []) if isinstance(response, dict) else []
+        errors = [m for m in messages if m.get("severity") == "error"]
+        warnings = [m for m in messages if m.get("severity") == "warning"]
+        sorries = response.get("sorries", []) if isinstance(response, dict) else []
+        if errors:
+            out.append("Errors:")
+            out.extend(
+                f"{m.get('data', '')} (at line {m.get('pos', {}).get('line', '?')})" for m in errors
+            )
+        if warnings:
+            out.append("Warnings:")
+            out.extend(
+                f"{m.get('data', '')} (at line {m.get('pos', {}).get('line', '?')})" for m in warnings
+            )
+        if sorries:
+            out.append("Sorries:")
+            out.extend(
+                f"Incomplete proof at line {s.get('pos', {}).get('line', '?')}: {str(s.get('goal', ''))[:120]}"
+                for s in sorries
+            )
+        if not out:
+            out.append("Verification successful")
+        return out
+
+    def _check_with_kimina(self, content: str) -> tuple[bool, str]:
+        if not self._init_kimina_client():
+            return False, "kimina-client unavailable; fallback to lean-interact."
+        if Snippet is None:
+            return False, "kimina-client model unavailable; fallback to lean-interact."
+        try:
+            response = self._kimina_client.check(
+                snips=[Snippet(id="proof-check", code=content)],
+                timeout=self.timeout_sec if self.timeout_sec > 0 else 60,
+                debug=self.kimina_debug,
+                reuse=self.kimina_reuse,
+                show_progress=False,
+                batch_size=1,
+                max_workers=1,
+            )
+            if not response.results:
+                return False, "Kimina verification error: empty result list."
+            result = response.results[0]
+            analysis = result.analyze()
+            status = getattr(analysis, "status", None)
+            ok = (
+                status == SnippetStatus.valid
+                if SnippetStatus is not None
+                else str(status).lower().endswith("valid")
+            )
+            lines = self._collect_kimina_output_lines(result)
+            if ok and lines == ["Verification successful"]:
+                return True, "Verification successful"
+            return ok, "\n".join(lines)
+        except Exception as exc:
+            return False, f"kimina verification error: {exc}"
+
     def check_proof(self, theorem_block: str, proof: str) -> tuple[bool, str]:
         content = self._build_check_content(theorem_block, proof)
+        if self.verifier_backend == "kimina":
+            ok, msg = self._check_with_kimina(content)
+            if ok:
+                return ok, msg
+            if "fallback to lean-interact" in msg and self.use_lean_interact:
+                return self._check_with_lean_interact(content)
+            return ok, msg
+
+        if self.verifier_backend == "auto":
+            ok, msg = self._check_with_kimina(content)
+            if ok:
+                return ok, msg
+            if "fallback to lean-interact" in msg and self.use_lean_interact:
+                return self._check_with_lean_interact(content)
+            return ok, msg
+
         return self._check_with_lean_interact(content)
 

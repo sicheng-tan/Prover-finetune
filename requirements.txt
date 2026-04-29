@@ -8,6 +8,7 @@ regex>=2023.10.3
 pyyaml>=6.0
 openai>=1.0.0
 lean-interact>=0.9.0
+kimina-client
 hf-transfer
 peft>=0.10.0
 bitsandbytes>=0.43.0
