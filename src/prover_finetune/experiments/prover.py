@@ -98,6 +98,8 @@ class ProverGenerator:
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        if "attention_mask" not in inputs:
+            inputs["attention_mask"] = torch.ones_like(inputs["input_ids"], dtype=torch.long)
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         with _generation_timeout(self.inference_timeout_sec):
@@ -168,15 +170,27 @@ class DeepSeekProverV2Generator(ProverGenerator):
             tokenize=True,
             add_generation_prompt=True,
             return_tensors="pt",
-        ).to(self.model.device)
-        input_len = int(inputs.shape[-1])
+        )
+        if hasattr(inputs, "to"):
+            inputs = inputs.to(self.model.device)
+        if isinstance(inputs, torch.Tensor):
+            model_inputs = {"input_ids": inputs}
+        else:
+            model_inputs = dict(inputs)
+        if "input_ids" not in model_inputs:
+            raise ValueError("Chat template output does not contain input_ids.")
+        if "attention_mask" not in model_inputs:
+            model_inputs["attention_mask"] = torch.ones_like(
+                model_inputs["input_ids"], dtype=torch.long
+            )
+        input_len = int(model_inputs["input_ids"].shape[-1])
 
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         with _generation_timeout(self.inference_timeout_sec):
             with torch.no_grad():
                 out = self.model.generate(
-                    inputs,
+                    **model_inputs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=use_sampling,
                     temperature=self.temperature,
