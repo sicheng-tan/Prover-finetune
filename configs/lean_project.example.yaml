@@ -23,9 +23,9 @@ verifier_backend: kimina
 # kimina-lean-server client options
 kimina_api_url: http://localhost:8000
 kimina_api_key: null
-kimina_http_timeout: 600
+kimina_http_timeout: 240
 kimina_reuse: true
-kimina_debug: false
+kimina_debug: true
 
 # lean-interact fallback behavior
 use_lean_interact: true

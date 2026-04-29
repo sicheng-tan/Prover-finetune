@@ -75,10 +75,25 @@ docker run -d \
   -e LEAN_SERVER_REPL_PATH= \
   -e LEAN_SERVER_PROJECT_DIR= \
   -e LEAN_SERVER_MAX_REPLS=16 \
-  -e LEAN_SERVER_MAX_WAIT=120 \
-  -e LEAN_SERVER_MAX_REPL_MEM=32G \
-  -e LEAN_SERVER_MAX_REPL_USES=8G \
+  -e LEAN_SERVER_MAX_WAIT=30 \
+  -e LEAN_SERVER_MAX_REPL_MEM=8G \
+  -e LEAN_SERVER_MAX_REPL_USES=200 \
   projectnumina/kimina-lean-server:2.0.0
+```
+
+本地启动（非 Docker）可使用同一组参数：
+
+```bash
+export LEAN_SERVER_HOST=0.0.0.0 
+export LEAN_SERVER_PORT=8000 
+export LEAN_SERVER_LEAN_VERSION=v4.27.0 
+export LEAN_SERVER_REPL_PATH=repl/.lake/build/bin/repl 
+export LEAN_SERVER_PROJECT_DIR=mathlib4
+export LEAN_SERVER_MAX_REPLS=16
+export LEAN_SERVER_MAX_WAIT=30
+export LEAN_SERVER_MAX_REPL_MEM=8G
+export LEAN_SERVER_MAX_REPL_USES=200
+python -m server
 ```
 
 验证服务是否可用（示例）：
@@ -296,6 +311,21 @@ python scripts/filter_numinamath_lean.py \
 输出 JSONL 会额外包含：
 
 - `formal_ground_truth_token_count`（便于后续按长度做分桶训练）
+
+如需构建“带推理步骤”的微调输入文件，可进一步执行：
+
+```bash
+python scripts/extract_numinamath_reasoning.py \
+  --input-path data/processed/numinamath_lean_filtered_train.jsonl \
+  --output-path data/processed/numinamath_lean_reasoning_train.jsonl
+```
+
+该脚本会从 `formal_ground_truth` 中提取注释推理并生成以下字段：
+
+- `formal_statement`：补齐为可训练的 `... := by sorry` 形式
+- `reasoning_steps`：聚合后的计划文本（供 `deepseek_prover_v2` formatter 使用）
+- `reasoning_steps_list`：原始步骤列表
+- `formal_proof_no_comments`：去除注释后的 Lean 证明代码
 
 ---
 

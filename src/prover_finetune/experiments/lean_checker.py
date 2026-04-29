@@ -188,16 +188,38 @@ class LeanChecker:
 
     def _collect_kimina_output_lines(self, result: Any) -> list[str]:
         out: list[str] = []
+        diagnostics = getattr(result, "diagnostics", None)
+        diagnostics_dict = None
+        if diagnostics is not None:
+            if hasattr(diagnostics, "model_dump"):
+                diagnostics_dict = diagnostics.model_dump(exclude_none=True)
+            elif isinstance(diagnostics, dict):
+                diagnostics_dict = diagnostics
         if getattr(result, "error", None):
             out.append(f"Server error: {result.error}")
+            if diagnostics_dict:
+                out.append("Diagnostics:")
+                out.append(f"repl_uuid: {diagnostics_dict.get('repl_uuid', 'n/a')}")
+                out.append(f"cpu_max: {diagnostics_dict.get('cpu_max', 'n/a')}")
+                out.append(f"memory_max: {diagnostics_dict.get('memory_max', 'n/a')}")
             return out
 
         response = getattr(result, "response", None)
         if response is None:
             out.append("Empty response from Kimina server.")
+            if diagnostics_dict:
+                out.append("Diagnostics:")
+                out.append(f"repl_uuid: {diagnostics_dict.get('repl_uuid', 'n/a')}")
+                out.append(f"cpu_max: {diagnostics_dict.get('cpu_max', 'n/a')}")
+                out.append(f"memory_max: {diagnostics_dict.get('memory_max', 'n/a')}")
             return out
         if isinstance(response, dict) and response.get("message"):
             out.append(f"REPL error: {response.get('message')}")
+            if diagnostics_dict:
+                out.append("Diagnostics:")
+                out.append(f"repl_uuid: {diagnostics_dict.get('repl_uuid', 'n/a')}")
+                out.append(f"cpu_max: {diagnostics_dict.get('cpu_max', 'n/a')}")
+                out.append(f"memory_max: {diagnostics_dict.get('memory_max', 'n/a')}")
             return out
 
         messages = response.get("messages", []) if isinstance(response, dict) else []
@@ -220,6 +242,11 @@ class LeanChecker:
                 f"Incomplete proof at line {s.get('pos', {}).get('line', '?')}: {str(s.get('goal', ''))[:120]}"
                 for s in sorries
             )
+        if diagnostics_dict:
+            out.append("Diagnostics:")
+            out.append(f"repl_uuid: {diagnostics_dict.get('repl_uuid', 'n/a')}")
+            out.append(f"cpu_max: {diagnostics_dict.get('cpu_max', 'n/a')}")
+            out.append(f"memory_max: {diagnostics_dict.get('memory_max', 'n/a')}")
         if not out:
             out.append("Verification successful")
         return out
