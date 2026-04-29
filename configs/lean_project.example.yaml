@@ -18,7 +18,7 @@ mathlib_setup:
 # - kimina: use kimina-lean-server client
 # - lean_interact: use local lean-interact
 # - auto: try kimina first, then fallback to lean-interact
-verifier_backend: lean-interact
+verifier_backend: lean_interact
 
 # kimina-lean-server client options
 kimina_api_url: http://localhost:8000
