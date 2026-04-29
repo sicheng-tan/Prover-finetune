@@ -11,6 +11,7 @@ model:
   name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
   model_type: deepseek_prover_v2
   adapter_path: null
+  attn_implementation: sdpa
   gpu_device: 0
   require_gpu: true
   inference_timeout_sec: 180

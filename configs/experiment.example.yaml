@@ -11,6 +11,8 @@ model:
   # auto | generic | deepseek_prover_v2
   model_type: auto
   adapter_path: null
+  # Optional: flash_attention_2 | sdpa | eager
+  attn_implementation: null
   gpu_device: 0
   require_gpu: true
   inference_timeout_sec: 120

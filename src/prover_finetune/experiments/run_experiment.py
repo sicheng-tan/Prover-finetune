@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
+import yaml
 from tqdm import tqdm
 
 from .config import ExperimentConfig
@@ -63,9 +64,17 @@ def _attach_file_logger(logger: logging.Logger, output_dir: Path) -> None:
 
 def _safe_config_for_log(cfg: dict) -> dict:
     redacted = copy.deepcopy(cfg)
+    sensitive_exact_keys = {
+        "api_key",
+        "token",
+        "access_token",
+        "refresh_token",
+        "secret",
+        "password",
+    }
     for key in list(redacted.keys()):
         lower = str(key).lower()
-        if "key" in lower or "token" in lower or "secret" in lower or "password" in lower:
+        if lower in sensitive_exact_keys or lower.endswith("_api_key") or lower.endswith("_token"):
             redacted[key] = "***"
     return redacted
 
@@ -83,6 +92,21 @@ def _log_run_configuration(
     logger.info("minif2f:\n%s", json.dumps(_safe_config_for_log(minif2f_cfg), ensure_ascii=False, indent=2))
     logger.info("lean:\n%s", json.dumps(_safe_config_for_log(lean_cfg), ensure_ascii=False, indent=2))
     logger.info("=========================")
+
+
+def _expand_lean_config(lean_cfg: dict) -> dict:
+    merged = dict(lean_cfg)
+    project_cfg_path = merged.get("project_config_path")
+    if not project_cfg_path:
+        return merged
+    cfg_path = Path(project_cfg_path)
+    if not cfg_path.exists():
+        return merged
+    with cfg_path.open("r", encoding="utf-8") as f:
+        file_cfg = yaml.safe_load(f) or {}
+    if isinstance(file_cfg, dict):
+        merged = {**file_cfg, **merged}
+    return merged
 
 
 def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
@@ -305,6 +329,7 @@ def _run_worker(
     logger: logging.Logger,
     load_state: dict,
     progress_state: dict,
+    start_barrier: threading.Barrier,
 ) -> list[tuple[int, dict, int]]:
     worker_model_cfg = copy.deepcopy(model_cfg)
     worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
@@ -313,7 +338,11 @@ def _run_worker(
         load_state["loaded"] += 1
         logger.info("GPU %s model loaded.", gpu_id)
         if load_state["loaded"] == load_state["total"]:
-            logger.info("All worker models have finished loading.")
+            logger.info("All worker models have finished loading. Start task dispatch.")
+    try:
+        start_barrier.wait(timeout=900)
+    except threading.BrokenBarrierError as exc:
+        raise RuntimeError("Worker start barrier broken before task dispatch.") from exc
 
     worker_lean_cfg = copy.deepcopy(lean_cfg)
     base_project_dir = worker_lean_cfg.get("project_dir", ".lean_runner")
@@ -382,7 +411,8 @@ def main() -> None:
         hf_logging.disable_progress_bar()
     except Exception:
         pass
-    _log_run_configuration(logger, exp_cfg, model_cfg, minif2f_cfg, lean_cfg)
+    effective_lean_cfg = _expand_lean_config(lean_cfg)
+    _log_run_configuration(logger, exp_cfg, model_cfg, minif2f_cfg, effective_lean_cfg)
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
     pass_k = int(exp_cfg.get("pass_k", 1))
@@ -413,6 +443,7 @@ def main() -> None:
     packed_results: list[tuple[int, dict, int]] = []
     load_state = {"loaded": 0, "total": worker_count, "lock": threading.Lock()}
     progress_state = {"done": 0, "total": total_rows, "lock": threading.Lock()}
+    start_barrier = threading.Barrier(worker_count)
     logger.info(
         "Starting dynamic parallel run: total_samples=%d, workers=%d, gpus=%s",
         total_rows,
@@ -434,6 +465,7 @@ def main() -> None:
                 logger=logger,
                 load_state=load_state,
                 progress_state=progress_state,
+                start_barrier=start_barrier,
             )
             for i in range(worker_count)
         ]

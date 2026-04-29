@@ -1,10 +1,7 @@
-import signal
-import sys
-import threading
-from contextlib import contextmanager
+import time
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 DEEPSEEK_PROVER_V2_PROMPT = """Complete the following Lean 4 code:
 
@@ -20,31 +17,45 @@ class LLMGenerationTimeoutError(TimeoutError):
     pass
 
 
-@contextmanager
-def _generation_timeout(timeout_sec: int | None):
-    if timeout_sec is None or timeout_sec <= 0:
-        yield
-        return
-    # signal.alarm only works reliably on Unix main thread.
-    if sys.platform.startswith("win") or threading.current_thread() is not threading.main_thread():
-        yield
-        return
+class _WallClockStoppingCriteria(StoppingCriteria):
+    def __init__(self, timeout_sec: int):
+        self.timeout_sec = int(timeout_sec)
+        self.start_time = time.perf_counter()
+        self.triggered = False
 
-    def _handle_timeout(signum, frame):
-        del signum, frame
-        raise LLMGenerationTimeoutError(f"LLM generation timed out after {timeout_sec}s")
-
-    old_handler = signal.getsignal(signal.SIGALRM)
-    signal.signal(signal.SIGALRM, _handle_timeout)
-    signal.setitimer(signal.ITIMER_REAL, float(timeout_sec))
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old_handler)
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+        del input_ids, scores, kwargs
+        self.triggered = (time.perf_counter() - self.start_time) >= self.timeout_sec
+        return self.triggered
 
 
 class ProverGenerator:
+    @staticmethod
+    def _load_model(model_cfg: dict, device_map: str, trust_remote_code: bool = False):
+        base_kwargs = {
+            "device_map": device_map,
+            "torch_dtype": torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+        }
+        if trust_remote_code:
+            base_kwargs["trust_remote_code"] = True
+
+        attn_impl = model_cfg.get("attn_implementation")
+        if attn_impl:
+            try:
+                return AutoModelForCausalLM.from_pretrained(
+                    model_cfg["name_or_path"],
+                    attn_implementation=attn_impl,
+                    **base_kwargs,
+                )
+            except Exception:
+                # Fallback to default attention implementation for compatibility.
+                pass
+
+        return AutoModelForCausalLM.from_pretrained(
+            model_cfg["name_or_path"],
+            **base_kwargs,
+        )
+
     def __init__(self, model_cfg: dict):
         require_gpu = bool(model_cfg.get("require_gpu", True))
         if require_gpu and not torch.cuda.is_available():
@@ -66,11 +77,7 @@ class ProverGenerator:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        base_model = AutoModelForCausalLM.from_pretrained(
-            model_cfg["name_or_path"],
-            device_map=device_map,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        )
+        base_model = self._load_model(model_cfg, device_map, trust_remote_code=False)
         self.model = base_model
         self.model.eval()
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
@@ -95,6 +102,13 @@ class ProverGenerator:
             texts.append(text[len(prompt) :].strip() if text.startswith(prompt) else text.strip())
         return texts
 
+    def _build_stopping_criteria(self):
+        timeout_sec = self.inference_timeout_sec
+        if timeout_sec is None or int(timeout_sec) <= 0:
+            return None, None
+        criterion = _WallClockStoppingCriteria(int(timeout_sec))
+        return StoppingCriteriaList([criterion]), criterion
+
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
@@ -102,17 +116,23 @@ class ProverGenerator:
             inputs["attention_mask"] = torch.ones_like(inputs["input_ids"], dtype=torch.long)
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
-        with _generation_timeout(self.inference_timeout_sec):
-            with torch.no_grad():
-                out = self.model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=use_sampling,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    num_return_sequences=want_samples,
-                )
+        input_len = int(inputs["input_ids"].shape[-1])
+        stopping_criteria, timeout_criterion = self._build_stopping_criteria()
+        with torch.no_grad():
+            out = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=use_sampling,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                pad_token_id=self.tokenizer.eos_token_id,
+                num_return_sequences=want_samples,
+                stopping_criteria=stopping_criteria,
+            )
+        if timeout_criterion is not None and timeout_criterion.triggered:
+            raise LLMGenerationTimeoutError(
+                f"LLM generation timed out after {int(self.inference_timeout_sec)}s"
+            )
         return self._decode_generations(prompt, out)
 
     def generate_proof(self, statement: str) -> str:
@@ -144,12 +164,7 @@ class DeepSeekProverV2Generator(ProverGenerator):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        base_model = AutoModelForCausalLM.from_pretrained(
-            model_cfg["name_or_path"],
-            device_map=device_map,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            trust_remote_code=True,
-        )
+        base_model = self._load_model(model_cfg, device_map, trust_remote_code=True)
         self.model = base_model
         self.model.eval()
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
@@ -187,17 +202,22 @@ class DeepSeekProverV2Generator(ProverGenerator):
 
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
-        with _generation_timeout(self.inference_timeout_sec):
-            with torch.no_grad():
-                out = self.model.generate(
-                    **model_inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=use_sampling,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    num_return_sequences=want_samples,
-                )
+        stopping_criteria, timeout_criterion = self._build_stopping_criteria()
+        with torch.no_grad():
+            out = self.model.generate(
+                **model_inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=use_sampling,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                pad_token_id=self.tokenizer.eos_token_id,
+                num_return_sequences=want_samples,
+                stopping_criteria=stopping_criteria,
+            )
+        if timeout_criterion is not None and timeout_criterion.triggered:
+            raise LLMGenerationTimeoutError(
+                f"LLM generation timed out after {int(self.inference_timeout_sec)}s"
+            )
         continuations = out[:, input_len:]
         return [text.strip() for text in self.tokenizer.batch_decode(continuations)]
 
