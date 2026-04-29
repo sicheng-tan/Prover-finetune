@@ -37,7 +37,7 @@ lean_interact_verbose: true
 header_imports:
   - Mathlib
 header_set_options:
-  - maxHeartbeats 200000
+  - maxHeartbeats 0
 header_open_scopes:
   - BigOperators
   - Real
