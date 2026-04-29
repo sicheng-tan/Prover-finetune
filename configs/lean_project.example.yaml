@@ -29,7 +29,7 @@ kimina_debug: false
 
 # lean-interact fallback behavior
 use_lean_interact: true
-use_auto_server: false
+use_auto_server: true
 memory_limit_mb: 16384
 lean_interact_verbose: true
 

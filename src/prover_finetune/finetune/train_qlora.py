@@ -88,6 +88,38 @@ def build_lora_config(model_cfg: dict) -> LoraConfig:
     )
 
 
+def build_sft_trainer(
+    model,
+    tokenizer,
+    train_ds,
+    eval_ds,
+    peft_config: LoraConfig,
+    training_args: TrainingArguments,
+    max_seq_length: int,
+) -> SFTTrainer:
+    params = inspect.signature(SFTTrainer.__init__).parameters
+    trainer_kwargs = {
+        "model": model,
+        "train_dataset": train_ds,
+        "eval_dataset": eval_ds,
+        "peft_config": peft_config,
+        "args": training_args,
+    }
+
+    # trl changed tokenizer -> processing_class in newer versions.
+    if "tokenizer" in params:
+        trainer_kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in params:
+        trainer_kwargs["processing_class"] = tokenizer
+
+    if "dataset_text_field" in params:
+        trainer_kwargs["dataset_text_field"] = "text"
+    if "max_seq_length" in params:
+        trainer_kwargs["max_seq_length"] = max_seq_length
+
+    return SFTTrainer(**trainer_kwargs)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Path to finetune yaml config")
@@ -125,15 +157,14 @@ def main() -> None:
     }
     training_args = TrainingArguments(**training_kwargs)
 
-    trainer = SFTTrainer(
+    trainer = build_sft_trainer(
         model=model,
         tokenizer=tokenizer,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        dataset_text_field="text",
-        max_seq_length=data_cfg.get("max_seq_length", 1024),
+        train_ds=train_ds,
+        eval_ds=eval_ds,
         peft_config=peft_config,
-        args=training_args,
+        training_args=training_args,
+        max_seq_length=data_cfg.get("max_seq_length", 1024),
     )
 
     trainer.train()

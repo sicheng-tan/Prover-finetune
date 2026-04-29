@@ -61,6 +61,30 @@ def _attach_file_logger(logger: logging.Logger, output_dir: Path) -> None:
     logger.addHandler(file_handler)
 
 
+def _safe_config_for_log(cfg: dict) -> dict:
+    redacted = copy.deepcopy(cfg)
+    for key in list(redacted.keys()):
+        lower = str(key).lower()
+        if "key" in lower or "token" in lower or "secret" in lower or "password" in lower:
+            redacted[key] = "***"
+    return redacted
+
+
+def _log_run_configuration(
+    logger: logging.Logger,
+    exp_cfg: dict,
+    model_cfg: dict,
+    minif2f_cfg: dict,
+    lean_cfg: dict,
+) -> None:
+    logger.info("=== Run Configuration ===")
+    logger.info("experiment:\n%s", json.dumps(_safe_config_for_log(exp_cfg), ensure_ascii=False, indent=2))
+    logger.info("model:\n%s", json.dumps(_safe_config_for_log(model_cfg), ensure_ascii=False, indent=2))
+    logger.info("minif2f:\n%s", json.dumps(_safe_config_for_log(minif2f_cfg), ensure_ascii=False, indent=2))
+    logger.info("lean:\n%s", json.dumps(_safe_config_for_log(lean_cfg), ensure_ascii=False, indent=2))
+    logger.info("=========================")
+
+
 def _extract_lean_code_from_generation(generation: str) -> tuple[str, str]:
     def _extract_last_fence(text: str, language: str) -> str | None:
         pattern = rf"```{language}\b[\s\S]*?```"
@@ -345,6 +369,7 @@ def main() -> None:
         hf_logging.disable_progress_bar()
     except Exception:
         pass
+    _log_run_configuration(logger, exp_cfg, model_cfg, minif2f_cfg, lean_cfg)
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
     pass_k = int(exp_cfg.get("pass_k", 1))
