@@ -166,6 +166,8 @@ def _process_one_problem(
     first_extraction_mode = "none"
     last_generation_ms = 0
     last_verify_ms = 0
+    total_generation_ms = 0
+    total_verify_ms = 0
     candidates = []
 
     for idx in range(1, pass_k + 1):
@@ -186,8 +188,12 @@ def _process_one_problem(
             generation_ms = int((time.perf_counter() - gen_start) * 1000)
             last_generation_ms = generation_ms
             last_verify_ms = 0
+            total_generation_ms += generation_ms
             _append(logs, f"LLM generation timeout: {timeout_log}")
-            _append(logs, f"TIMING: generation_ms={generation_ms}, verify_ms=0")
+            _append(
+                logs,
+                f"TIMING: generation_ms={generation_ms}, verify_ms=0 | cumulative_generation_ms={total_generation_ms}, cumulative_verify_ms={total_verify_ms}",
+            )
             if idx == 1:
                 first_extraction_mode = "llm_timeout"
                 lean_log = timeout_log
@@ -207,6 +213,7 @@ def _process_one_problem(
             continue
         generation_ms = int((time.perf_counter() - gen_start) * 1000)
         last_generation_ms = generation_ms
+        total_generation_ms += generation_ms
 
         if idx == 1:
             first_prediction = pred_proof
@@ -227,11 +234,15 @@ def _process_one_problem(
         cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
         verify_ms = int((time.perf_counter() - verify_start) * 1000)
         last_verify_ms = verify_ms
+        total_verify_ms += verify_ms
         _append(logs, "LEAN OUTPUT:")
         _append(logs, cur_log)
         _append(logs, "-" * 80)
         _append(logs, f"LEAN CHECK RESULT: ok={cur_ok}")
-        _append(logs, f"TIMING: generation_ms={generation_ms}, verify_ms={verify_ms}")
+        _append(
+            logs,
+            f"TIMING: generation_ms={generation_ms}, verify_ms={verify_ms} | cumulative_generation_ms={total_generation_ms}, cumulative_verify_ms={total_verify_ms}",
+        )
         _append(logs, "=" * 80)
 
         candidates.append(
@@ -274,6 +285,8 @@ def _process_one_problem(
         "lean_output": lean_log,
         "last_generation_ms": last_generation_ms,
         "last_verify_ms": last_verify_ms,
+        "total_generation_ms": total_generation_ms,
+        "total_verify_ms": total_verify_ms,
         "pass_k": pass_k,
         "candidates": candidates,
     }
@@ -325,14 +338,14 @@ def _run_worker(
             total = progress_state["total"]
             status = "PASS" if ok_int else "FAIL"
             logger.info(
-                "[progress] %d/%d | gpu=%s | sample=%s | %s | gen_ms=%s | verify_ms=%s",
+                "[progress] %d/%d | gpu=%s | sample=%s | %s | gen_ms(total)=%s | verify_ms(total)=%s",
                 done,
                 total,
                 gpu_id,
                 result["id"],
                 status,
-                result.get("last_generation_ms", "-"),
-                result.get("last_verify_ms", "-"),
+                result.get("total_generation_ms", "-"),
+                result.get("total_verify_ms", "-"),
             )
     return out
 
