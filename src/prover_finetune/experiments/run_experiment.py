@@ -21,6 +21,13 @@ from .minif2f import load_minif2f
 from .prover import LLMGenerationTimeoutError, build_prover_generator
 
 
+def _resolve_tensor_parallel_size(model_cfg: dict, default: int = 1) -> int:
+    value = model_cfg.get("tensor_parallel_size")
+    if value is None:
+        return max(1, int(default))
+    return max(1, int(value))
+
+
 def _extract_theorem_block(problem: dict) -> str:
     # Expect miniF2F row to include Lean theorem statement.
     if "definition" in problem:
@@ -303,6 +310,240 @@ def _process_one_problem(
     return result, int(ok), logs
 
 
+def _run_vllm_batch_mode(
+    dataset: list[dict],
+    pass_k: int,
+    model_cfg: dict,
+    lean_cfg: dict,
+    problem_log_dir: Path,
+    logger: logging.Logger,
+) -> list[tuple[int, dict, int]]:
+    prover = build_prover_generator(model_cfg)
+    checker = LeanChecker(copy.deepcopy(lean_cfg))
+    checker.setup_project()
+    batch_size = max(1, int(model_cfg.get("vllm_batch_size", 16)))
+
+    states: list[dict] = []
+    total_rows = len(dataset)
+    for row_idx, row in enumerate(dataset, start=1):
+        theorem_block = _extract_theorem_block(row)
+        sample_id = row.get("id", row.get("name", f"sample_{row_idx}"))
+        logs: list[str] = []
+        _append(logs, "=" * 80)
+        _append(logs, f"SAMPLE {row_idx}/{total_rows} - id={sample_id}")
+        _append(logs, "-" * 80)
+        _append(logs, "THEOREM BLOCK:")
+        _append(logs, theorem_block)
+        _append(logs, "=" * 80)
+        states.append(
+            {
+                "row_idx": row_idx,
+                "row": row,
+                "id": sample_id,
+                "theorem": theorem_block,
+                "ok": False,
+                "lean_log": "",
+                "first_prediction": "",
+                "first_prediction_lean_code": "",
+                "first_extraction_mode": "none",
+                "candidates": [],
+                "total_generation_ms": 0.0,
+                "total_verify_ms": 0.0,
+                "logs": logs,
+            }
+        )
+
+    pending = list(range(len(states)))
+    done_count = 0
+    for attempt in range(1, pass_k + 1):
+        if not pending:
+            break
+        logger.info(
+            "vLLM batch generation attempt %d/%d for %d pending samples.",
+            attempt,
+            pass_k,
+            len(pending),
+        )
+        next_pending = []
+        for chunk_start in range(0, len(pending), batch_size):
+            chunk = pending[chunk_start : chunk_start + batch_size]
+            statements = [states[i]["theorem"] for i in chunk]
+            gen_start = time.perf_counter()
+            try:
+                batch_preds = prover.generate_proofs_batch(statements, num_samples=1)
+            except LLMGenerationTimeoutError as exc:
+                batch_elapsed_ms = (time.perf_counter() - gen_start) * 1000
+                timeout_log = str(exc)
+                per_sample_gen_ms = batch_elapsed_ms / max(1, len(chunk))
+                for state_idx in chunk:
+                    state = states[state_idx]
+                    state["total_generation_ms"] += per_sample_gen_ms
+                    _append(state["logs"], "=" * 80)
+                    _append(state["logs"], f"ATTEMPT {attempt}/{pass_k} - GENERATION")
+                    _append(state["logs"], "-" * 80)
+                    _append(
+                        state["logs"],
+                        (
+                            f"LLM generation timeout: {timeout_log} | gen_ms={per_sample_gen_ms:.1f} | "
+                            f"gen_ms(total)={state['total_generation_ms']:.1f}"
+                        ),
+                    )
+                    if attempt == 1:
+                        state["first_extraction_mode"] = "llm_timeout"
+                        state["lean_log"] = timeout_log
+                    state["candidates"].append(
+                        {
+                            "sample_idx": attempt,
+                            "ok": False,
+                            "prediction": "",
+                            "prediction_lean_code": "",
+                            "extraction_mode": "llm_timeout",
+                            "lean_output": timeout_log,
+                            "generation_ms": per_sample_gen_ms,
+                            "generation_ms_total": state["total_generation_ms"],
+                            "verify_ms": 0.0,
+                            "verify_ms_total": state["total_verify_ms"],
+                        }
+                    )
+                    _append(state["logs"], "=" * 80)
+                    if attempt >= pass_k:
+                        done_count += 1
+                    else:
+                        next_pending.append(state_idx)
+                continue
+
+            batch_elapsed_ms = (time.perf_counter() - gen_start) * 1000
+            per_sample_gen_ms = batch_elapsed_ms / max(1, len(chunk))
+            for state_idx, preds in zip(chunk, batch_preds):
+                state = states[state_idx]
+                pred_proof = preds[0] if preds else ""
+                retries_used = attempt - 1
+                retries_remaining = max(0, pass_k - attempt)
+                state["total_generation_ms"] += per_sample_gen_ms
+
+                _append(state["logs"], "=" * 80)
+                _append(state["logs"], f"ATTEMPT {attempt}/{pass_k} - GENERATION")
+                _append(state["logs"], "-" * 80)
+                _append(
+                    state["logs"],
+                    f"Sample id={state['id']} | retries_used={retries_used} | retries_remaining={retries_remaining}",
+                )
+                if attempt == 1:
+                    state["first_prediction"] = pred_proof
+                extracted_proof, extraction_mode = _extract_lean_code_from_generation(pred_proof)
+                if attempt == 1:
+                    state["first_prediction_lean_code"] = extracted_proof
+                    state["first_extraction_mode"] = extraction_mode
+
+                _append(state["logs"], "RAW MODEL OUTPUT:")
+                _append(state["logs"], pred_proof)
+                _append(state["logs"], "-" * 80)
+                _append(state["logs"], f"EXTRACTED LEAN CODE (mode={extraction_mode}):")
+                _append(state["logs"], extracted_proof)
+                _append(state["logs"], "=" * 80)
+                _append(state["logs"], f"ATTEMPT {attempt}/{pass_k} - LEAN VERIFICATION")
+                _append(state["logs"], "-" * 80)
+
+                verify_start = time.perf_counter()
+                cur_ok, cur_log = checker.check_proof(state["theorem"], extracted_proof)
+                verify_ms = (time.perf_counter() - verify_start) * 1000
+                state["total_verify_ms"] += verify_ms
+
+                _append(state["logs"], "LEAN OUTPUT:")
+                _append(state["logs"], cur_log)
+                _append(state["logs"], "-" * 80)
+                _append(
+                    state["logs"],
+                    (
+                        f"LEAN CHECK RESULT: ok={cur_ok} | gen_ms={per_sample_gen_ms:.1f} | verify_ms={verify_ms:.1f} "
+                        f"| gen_ms(total)={state['total_generation_ms']:.1f} | "
+                        f"verify_ms(total)={state['total_verify_ms']:.1f}"
+                    ),
+                )
+                _append(state["logs"], "=" * 80)
+
+                state["candidates"].append(
+                    {
+                        "sample_idx": attempt,
+                        "ok": cur_ok,
+                        "prediction": pred_proof,
+                        "prediction_lean_code": extracted_proof,
+                        "extraction_mode": extraction_mode,
+                        "lean_output": cur_log,
+                        "generation_ms": per_sample_gen_ms,
+                        "generation_ms_total": state["total_generation_ms"],
+                        "verify_ms": verify_ms,
+                        "verify_ms_total": state["total_verify_ms"],
+                    }
+                )
+
+                if cur_ok:
+                    state["ok"] = True
+                    state["lean_log"] = cur_log
+                    done_count += 1
+                    _append(
+                        state["logs"],
+                        f"SUCCESS - sample id={state['id']} solved at attempt {attempt}/{pass_k} (retries_used={retries_used}).",
+                    )
+                    _append(state["logs"], "=" * 80)
+                else:
+                    if attempt == 1:
+                        state["lean_log"] = cur_log
+                    if attempt >= pass_k:
+                        done_count += 1
+                    else:
+                        next_pending.append(state_idx)
+                logger.info(
+                    "[progress] %d/%d | sample=%s | %s | attempts=%d/%d | gen_ms(total)=%.1f | verify_ms(total)=%.1f",
+                    done_count,
+                    total_rows,
+                    state["id"],
+                    "PASS" if cur_ok else "FAIL",
+                    attempt,
+                    pass_k,
+                    float(state["total_generation_ms"]),
+                    float(state["total_verify_ms"]),
+                )
+        pending = next_pending
+
+    packed_results: list[tuple[int, dict, int]] = []
+    for state in states:
+        if not state["ok"]:
+            _append(state["logs"], f"FAILED - sample id={state['id']} after {pass_k} attempts.")
+            _append(state["logs"], "=" * 80)
+        attempts_used = len(state["candidates"])
+        _append(
+            state["logs"],
+            (
+                f"SAMPLE SUMMARY: attempts={attempts_used}/{pass_k} | "
+                f"gen_ms(total)={state['total_generation_ms']:.1f} | "
+                f"verify_ms(total)={state['total_verify_ms']:.1f}"
+            ),
+        )
+
+        result = {
+            "row_idx": state["row_idx"],
+            "id": state["id"],
+            "ok": state["ok"],
+            "theorem": state["theorem"],
+            "comment": state["row"].get("comment"),
+            "prediction": state["first_prediction"],
+            "prediction_lean_code": state["first_prediction_lean_code"],
+            "extraction_mode": state["first_extraction_mode"],
+            "lean_output": state["lean_log"],
+            "attempts_used": attempts_used,
+            "generation_ms_total": state["total_generation_ms"],
+            "verify_ms_total": state["total_verify_ms"],
+            "pass_k": pass_k,
+            "candidates": state["candidates"],
+        }
+        log_name_raw = state["row"].get("name") or state["row"].get("id") or f"sample_{state['row_idx']}"
+        safe_name = str(log_name_raw).replace("/", "_")
+        (problem_log_dir / f"{safe_name}.log").write_text("\n".join(state["logs"]) + "\n", encoding="utf-8")
+        packed_results.append((state["row_idx"], result, int(state["ok"])))
+    return packed_results
+
+
 def _run_worker(
     worker_idx: int,
     gpu_id: int,
@@ -317,7 +558,7 @@ def _run_worker(
     progress_state: dict,
 ) -> list[tuple[int, dict, int]]:
     worker_model_cfg = copy.deepcopy(model_cfg)
-    worker_model_cfg["device_map"] = f"cuda:{gpu_id}"
+    worker_model_cfg["tensor_parallel_size"] = _resolve_tensor_parallel_size(worker_model_cfg, default=1)
     prover = build_prover_generator(worker_model_cfg)
     with load_state["lock"]:
         load_state["loaded"] += 1
@@ -425,42 +666,73 @@ def main() -> None:
     problem_log_dir = output_dir / "problem_logs"
     problem_log_dir.mkdir(parents=True, exist_ok=True)
     gpu_ids = _discover_gpu_ids(exp_cfg, model_cfg, logger)
-    worker_count = min(len(gpu_ids), total_rows)
-    gpu_ids = gpu_ids[:worker_count]
-    indexed_rows = list(enumerate(dataset, start=1))
-    task_queue: "queue.Queue[tuple[int, dict]]" = queue.Queue()
-    for item in indexed_rows:
-        task_queue.put(item)
+    use_vllm = bool(model_cfg.get("use_vllm", True))
+    if use_vllm:
+        # vLLM manages intra-engine parallelism itself via tensor parallel.
+        # Keep a single engine process and use all configured GPUs.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in gpu_ids)
+        model_cfg = copy.deepcopy(model_cfg)
+        model_cfg["tensor_parallel_size"] = _resolve_tensor_parallel_size(model_cfg, default=len(gpu_ids))
+        worker_count = 1
+        gpu_ids = [0]
+        logger.info(
+            "vLLM enabled: CUDA_VISIBLE_DEVICES=%s, tensor_parallel_size=%d, worker_count=%d",
+            os.environ["CUDA_VISIBLE_DEVICES"],
+            int(model_cfg["tensor_parallel_size"]),
+            worker_count,
+        )
+    else:
+        worker_count = min(len(gpu_ids), total_rows)
+        gpu_ids = gpu_ids[:worker_count]
+    if use_vllm:
+        logger.info(
+            "Starting vLLM batched run with dynamic backfill: total_samples=%d, pass_k=%d",
+            total_rows,
+            pass_k,
+        )
+        packed_results = _run_vllm_batch_mode(
+            dataset=dataset,
+            pass_k=pass_k,
+            model_cfg=model_cfg,
+            lean_cfg=lean_cfg,
+            problem_log_dir=problem_log_dir,
+            logger=logger,
+        )
+    else:
+        indexed_rows = list(enumerate(dataset, start=1))
+        task_queue: "queue.Queue[tuple[int, dict]]" = queue.Queue()
+        for item in indexed_rows:
+            task_queue.put(item)
 
-    packed_results: list[tuple[int, dict, int]] = []
-    load_state = {"loaded": 0, "total": worker_count, "lock": threading.Lock()}
-    progress_state = {"done": 0, "total": total_rows, "lock": threading.Lock()}
-    logger.info(
-        "Starting dynamic parallel run: total_samples=%d, workers=%d, gpus=%s",
-        total_rows,
-        worker_count,
-        gpu_ids,
-    )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = [
-            executor.submit(
-                _run_worker,
-                worker_idx=i,
-                gpu_id=gpu_ids[i],
-                task_queue=task_queue,
-                total_rows=total_rows,
-                pass_k=pass_k,
-                model_cfg=model_cfg,
-                lean_cfg=lean_cfg,
-                problem_log_dir=problem_log_dir,
-                logger=logger,
-                load_state=load_state,
-                progress_state=progress_state,
-            )
-            for i in range(worker_count)
-        ]
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
-            packed_results.extend(future.result())
+        packed_results: list[tuple[int, dict, int]] = []
+        load_state = {"loaded": 0, "total": worker_count, "lock": threading.Lock()}
+        progress_state = {"done": 0, "total": total_rows, "lock": threading.Lock()}
+        logger.info(
+            "Starting dynamic parallel run: total_samples=%d, workers=%d, gpus=%s",
+            total_rows,
+            worker_count,
+            gpu_ids,
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [
+                executor.submit(
+                    _run_worker,
+                    worker_idx=i,
+                    gpu_id=gpu_ids[i],
+                    task_queue=task_queue,
+                    total_rows=total_rows,
+                    pass_k=pass_k,
+                    model_cfg=model_cfg,
+                    lean_cfg=lean_cfg,
+                    problem_log_dir=problem_log_dir,
+                    logger=logger,
+                    load_state=load_state,
+                    progress_state=progress_state,
+                )
+                for i in range(worker_count)
+            ]
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
+                packed_results.extend(future.result())
 
     packed_results.sort(key=lambda x: x[0])
     results = [item[1] for item in packed_results]

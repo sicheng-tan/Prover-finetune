@@ -12,11 +12,14 @@ model:
   model_type: deepseek_prover_v2
   adapter_path: null
   require_gpu: true
+  use_vllm: true
   inference_timeout_sec: 180
   max_new_tokens: 4096
   temperature: 0.7
   top_p: 0.95
   do_sample: true
+  tensor_parallel_size: null  # null => use len(experiment.gpu_ids)
+  gpu_memory_utilization: 0.8
 
 minif2f:
   source_type: local_json

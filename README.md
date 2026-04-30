@@ -121,7 +121,9 @@ python scripts/extract_minif2f_lean_to_json.py
   - `name_or_path`: 基座模型
   - `model_type`: `auto` / `generic` / `deepseek_prover_v2`
   - `adapter_path`: LoRA 适配器目录（可为空）
-  - 设备参数：`gpu_device`（如 `0` 或 `cuda:1`）/ `device_map`（更底层，优先级更高）
+  - 推理后端：`use_vllm`（建议保持 `true`）
+  - 并行参数：`tensor_parallel_size`（默认取 `gpu_ids` 长度）/ `gpu_memory_utilization`
+  - 批量参数：`vllm_batch_size`（每轮送入 vLLM 的题目数，默认 16）
   - 生成参数：`inference_timeout_sec` / `max_new_tokens` / `temperature` / `top_p` / `do_sample`
 - `minif2f`
   - `source_type`: `local_json` / `local_jsonl` / `local_lean_dir`
@@ -154,8 +156,9 @@ python -m src.prover_finetune.experiments.run_experiment --config configs/experi
 
 并行执行说明：
 
-- 会按 `gpu_ids` 长度启动同等数量线程（每线程绑定一个 GPU）。
-- 每线程独立初始化 prover 与 Lean checker，避免 `Main.lean` 互相覆盖。
+- 使用 vLLM 后会启动单引擎推理，并通过 `tensor_parallel_size` 使用多 GPU 并行。
+- 每轮会对未通过样本做批量生成（`vllm_batch_size`）并动态回填校验，通过后自动退出后续轮次。
+- Lean checker 仍按样本顺序执行，保证日志与结果结构不变。
 - 若 `gpu_ids` 包含不可见设备编号，程序会在启动时直接报错。
 
 `results.json` 中每条样本会记录：
