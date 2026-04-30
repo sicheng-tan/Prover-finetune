@@ -120,9 +120,19 @@ def _append(lines: list[str], msg: str) -> None:
 def _safe_config_for_log(value):
     if isinstance(value, dict):
         redacted = {}
+        sensitive_exact_keys = {
+            "api_key",
+            "openai_api_key",
+            "hf_token",
+            "huggingface_token",
+            "access_token",
+            "auth_token",
+            "secret",
+            "password",
+        }
         for k, v in value.items():
             key_lower = str(k).lower()
-            if any(token in key_lower for token in ("key", "token", "secret", "password")):
+            if key_lower in sensitive_exact_keys:
                 redacted[k] = "***REDACTED***"
             else:
                 redacted[k] = _safe_config_for_log(v)
