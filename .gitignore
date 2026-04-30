@@ -12,3 +12,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.cpython-*.pyc
+
+# Ignore large processed training files
+data/processed/numinamath_lean_filtered_train.jsonl
+data/processed/numinamath_lean_reasoning_train.jsonl

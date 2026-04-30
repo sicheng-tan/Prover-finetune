@@ -8,6 +8,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -116,6 +117,33 @@ def _append(lines: list[str], msg: str) -> None:
     lines.append(f"[{ts}] {msg}")
 
 
+def _safe_config_for_log(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for k, v in value.items():
+            key_lower = str(k).lower()
+            if any(token in key_lower for token in ("key", "token", "secret", "password")):
+                redacted[k] = "***REDACTED***"
+            else:
+                redacted[k] = _safe_config_for_log(v)
+        return redacted
+    if isinstance(value, list):
+        return [_safe_config_for_log(v) for v in value]
+    return value
+
+
+def _log_run_configuration(
+    logger: logging.Logger, exp_cfg: dict, model_cfg: dict, minif2f_cfg: dict, lean_cfg: dict
+) -> None:
+    payload = {
+        "experiment": _safe_config_for_log(exp_cfg),
+        "model": _safe_config_for_log(model_cfg),
+        "minif2f": _safe_config_for_log(minif2f_cfg),
+        "lean": _safe_config_for_log(lean_cfg),
+    }
+    logger.info("Run configuration:\n%s", json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def _process_one_problem(
     row_idx: int,
     total_rows: int,
@@ -140,6 +168,8 @@ def _process_one_problem(
     first_prediction_lean_code = ""
     first_extraction_mode = "none"
     candidates = []
+    total_generation_ms = 0.0
+    total_verify_ms = 0.0
 
     for idx in range(1, pass_k + 1):
         retries_used = idx - 1
@@ -151,11 +181,17 @@ def _process_one_problem(
             logs,
             f"Sample id={sample_id} | retries_used={retries_used} | retries_remaining={retries_remaining}",
         )
+        gen_start = time.perf_counter()
         try:
             pred_proof = prover.generate_proof(theorem_block)
         except LLMGenerationTimeoutError as exc:
+            gen_ms = (time.perf_counter() - gen_start) * 1000
+            total_generation_ms += gen_ms
             timeout_log = str(exc)
-            _append(logs, f"LLM generation timeout: {timeout_log}")
+            _append(
+                logs,
+                f"LLM generation timeout: {timeout_log} | gen_ms={gen_ms:.1f} | gen_ms(total)={total_generation_ms:.1f}",
+            )
             if idx == 1:
                 first_extraction_mode = "llm_timeout"
                 lean_log = timeout_log
@@ -167,10 +203,16 @@ def _process_one_problem(
                     "prediction_lean_code": "",
                     "extraction_mode": "llm_timeout",
                     "lean_output": timeout_log,
+                    "generation_ms": gen_ms,
+                    "generation_ms_total": total_generation_ms,
+                    "verify_ms": 0.0,
+                    "verify_ms_total": total_verify_ms,
                 }
             )
             _append(logs, "=" * 80)
             continue
+        gen_ms = (time.perf_counter() - gen_start) * 1000
+        total_generation_ms += gen_ms
 
         if idx == 1:
             first_prediction = pred_proof
@@ -187,11 +229,20 @@ def _process_one_problem(
         _append(logs, "=" * 80)
         _append(logs, f"ATTEMPT {idx}/{pass_k} - LEAN VERIFICATION")
         _append(logs, "-" * 80)
+        verify_start = time.perf_counter()
         cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
+        verify_ms = (time.perf_counter() - verify_start) * 1000
+        total_verify_ms += verify_ms
         _append(logs, "LEAN OUTPUT:")
         _append(logs, cur_log)
         _append(logs, "-" * 80)
-        _append(logs, f"LEAN CHECK RESULT: ok={cur_ok}")
+        _append(
+            logs,
+            (
+                f"LEAN CHECK RESULT: ok={cur_ok} | gen_ms={gen_ms:.1f} | verify_ms={verify_ms:.1f} "
+                f"| gen_ms(total)={total_generation_ms:.1f} | verify_ms(total)={total_verify_ms:.1f}"
+            ),
+        )
         _append(logs, "=" * 80)
 
         candidates.append(
@@ -202,6 +253,10 @@ def _process_one_problem(
                 "prediction_lean_code": extracted_proof,
                 "extraction_mode": extraction_mode,
                 "lean_output": cur_log,
+                "generation_ms": gen_ms,
+                "generation_ms_total": total_generation_ms,
+                "verify_ms": verify_ms,
+                "verify_ms_total": total_verify_ms,
             }
         )
         if cur_ok:
@@ -230,6 +285,8 @@ def _process_one_problem(
         "prediction_lean_code": first_prediction_lean_code,
         "extraction_mode": first_extraction_mode,
         "lean_output": lean_log,
+        "generation_ms_total": total_generation_ms,
+        "verify_ms_total": total_verify_ms,
         "pass_k": pass_k,
         "candidates": candidates,
     }
@@ -265,11 +322,20 @@ def _run_worker(
     checker.setup_project()
 
     out: list[tuple[int, dict, int]] = []
+    logger.info("worker_%d started on gpu=%s", worker_idx, gpu_id)
     while True:
         try:
             row_idx, row = task_queue.get_nowait()
         except queue.Empty:
             break
+        queue_left = task_queue.qsize()
+        logger.info(
+            "worker_%d dequeued sample_id=%s row_idx=%d queue_remaining≈%d",
+            worker_idx,
+            row.get("id", row.get("name", f"sample_{row_idx}")),
+            row_idx,
+            queue_left,
+        )
         result, ok_int, logs = _process_one_problem(row_idx, total_rows, row, pass_k, prover, checker)
         log_name_raw = row.get("name") or row.get("id") or f"sample_{row_idx}"
         safe_name = str(log_name_raw).replace("/", "_")
@@ -281,13 +347,16 @@ def _run_worker(
             total = progress_state["total"]
             status = "PASS" if ok_int else "FAIL"
             logger.info(
-                "[progress] %d/%d | gpu=%s | sample=%s | %s",
+                "[progress] %d/%d | gpu=%s | sample=%s | %s | gen_ms(total)=%.1f | verify_ms(total)=%.1f",
                 done,
                 total,
                 gpu_id,
                 result["id"],
                 status,
+                float(result.get("generation_ms_total", 0.0)),
+                float(result.get("verify_ms_total", 0.0)),
             )
+    logger.info("worker_%d finished on gpu=%s processed=%d", worker_idx, gpu_id, len(out))
     return out
 
 
@@ -309,6 +378,7 @@ def main() -> None:
     output_dir = Path(exp_cfg.get("output_dir", "outputs/experiments/default"))
     output_dir.mkdir(parents=True, exist_ok=True)
     _attach_file_logger(logger, output_dir)
+    _log_run_configuration(logger, exp_cfg, model_cfg, minif2f_cfg, lean_cfg)
     # Suppress model loading/download progress bars in multi-thread mode.
     os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     try:

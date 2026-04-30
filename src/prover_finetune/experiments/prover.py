@@ -89,15 +89,16 @@ class ProverGenerator:
         )
 
     def _decode_generations(self, prompt: str, out: torch.Tensor) -> list[str]:
-        decoded = self.tokenizer.batch_decode(out)
-        texts: list[str] = []
-        for text in decoded:
-            texts.append(text[len(prompt) :].strip() if text.startswith(prompt) else text.strip())
-        return texts
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
+        input_len = int(prompt_ids.shape[-1])
+        generated = out[:, input_len:]
+        return [text.strip() for text in self.tokenizer.batch_decode(generated)]
 
     def generate_proofs(self, statement: str, num_samples: int = 1) -> list[str]:
         prompt = self.build_prompt(statement)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        if "attention_mask" not in inputs:
+            inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         with _generation_timeout(self.inference_timeout_sec):
@@ -169,13 +170,21 @@ class DeepSeekProverV2Generator(ProverGenerator):
             add_generation_prompt=True,
             return_tensors="pt",
         ).to(self.model.device)
+        if isinstance(inputs, torch.Tensor):
+            model_inputs = {"input_ids": inputs}
+        else:
+            model_inputs = dict(inputs)
+        if "input_ids" not in model_inputs:
+            raise ValueError("Tokenizer chat template output does not contain input_ids.")
+        if "attention_mask" not in model_inputs:
+            model_inputs["attention_mask"] = torch.ones_like(model_inputs["input_ids"])
 
         want_samples = max(1, int(num_samples))
         use_sampling = self.do_sample or want_samples > 1
         with _generation_timeout(self.inference_timeout_sec):
             with torch.no_grad():
                 out = self.model.generate(
-                    inputs,
+                    **model_inputs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=use_sampling,
                     temperature=self.temperature,
@@ -183,7 +192,9 @@ class DeepSeekProverV2Generator(ProverGenerator):
                     pad_token_id=self.tokenizer.eos_token_id,
                     num_return_sequences=want_samples,
                 )
-        return [text.strip() for text in self.tokenizer.batch_decode(out)]
+        input_len = model_inputs["input_ids"].shape[-1]
+        generated = out[:, input_len:]
+        return [text.strip() for text in self.tokenizer.batch_decode(generated)]
 
 
 def build_prover_generator(model_cfg: dict) -> ProverGenerator:

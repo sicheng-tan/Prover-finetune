@@ -29,9 +29,10 @@ class LeanChecker:
         self.timeout_sec = int(merged_cfg.get("timeout_sec", 30))
         self.header_imports = merged_cfg.get("header_imports", ["Mathlib"])
         self.header_set_options = merged_cfg.get("header_set_options", ["maxHeartbeats 200000"])
-        self.header_open_scopes = merged_cfg.get(
-            "header_open_scopes", ["BigOperators", "Real", "Nat", "Topology", "Rat"]
+        self.header_open_namespaces = merged_cfg.get(
+            "header_open_namespaces", ["BigOperators", "Real", "Nat", "Topology", "Rat"]
         )
+        self.header_open_scoped = merged_cfg.get("header_open_scoped", [])
         self.use_auto_server = bool(merged_cfg.get("use_auto_server", True))
         self.use_lean_interact = bool(merged_cfg.get("use_lean_interact", True))
         self.memory_limit_mb = merged_cfg.get("memory_limit_mb")
@@ -53,14 +54,16 @@ class LeanChecker:
     def _build_check_content(self, theorem_block: str, proof: str) -> str:
         imports_block = "\n".join(f"import {name}" for name in self.header_imports)
         options_block = "\n".join(f"set_option {opt}" for opt in self.header_set_options)
-        open_block = (
-            f"open {' '.join(self.header_open_scopes)}" if self.header_open_scopes else ""
+        open_namespace_block = (
+            f"open {' '.join(self.header_open_namespaces)}" if self.header_open_namespaces else ""
         )
-        header_block = (
-            f"{imports_block}\n\n"
-            f"{options_block}\n\n"
-            f"{open_block}\n\n"
+        open_scoped_block = (
+            f"open scoped {' '.join(self.header_open_scoped)}" if self.header_open_scoped else ""
         )
+        header_parts = [imports_block, options_block, open_namespace_block, open_scoped_block]
+        header_block = "\n\n".join(part for part in header_parts if part)
+        if header_block:
+            header_block = f"{header_block}\n\n"
         proof_stripped = proof.strip()
         theorem_stripped = theorem_block.strip()
 

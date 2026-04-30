@@ -23,10 +23,11 @@ lean_interact_verbose: true
 header_imports:
   - Mathlib
 header_set_options:
-  - maxHeartbeats 200000
-header_open_scopes:
+  - maxHeartbeats 0
+header_open_namespaces:
   - BigOperators
   - Real
   - Nat
   - Topology
   - Rat
+header_open_scoped: []

@@ -1,4 +1,5 @@
 import argparse
+import inspect
 from pathlib import Path
 
 import torch
@@ -13,6 +14,45 @@ from trl import SFTTrainer
 
 from .config import FinetuneConfig
 from .data import load_and_process_dataset
+
+
+def _resolve_eval_strategy_key() -> str:
+    params = inspect.signature(TrainingArguments.__init__).parameters
+    if "evaluation_strategy" in params:
+        return "evaluation_strategy"
+    if "eval_strategy" in params:
+        return "eval_strategy"
+    return "evaluation_strategy"
+
+
+def build_sft_trainer(
+    *,
+    model,
+    tokenizer,
+    train_dataset,
+    eval_dataset,
+    peft_config,
+    args: TrainingArguments,
+    dataset_text_field: str,
+    max_seq_length: int,
+) -> SFTTrainer:
+    params = inspect.signature(SFTTrainer.__init__).parameters
+    kwargs = {
+        "model": model,
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset,
+        "peft_config": peft_config,
+        "args": args,
+    }
+    if "tokenizer" in params:
+        kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in params:
+        kwargs["processing_class"] = tokenizer
+    if "dataset_text_field" in params:
+        kwargs["dataset_text_field"] = dataset_text_field
+    if "max_seq_length" in params:
+        kwargs["max_seq_length"] = max_seq_length
+    return SFTTrainer(**kwargs)
 
 
 def _to_torch_dtype(name: str) -> torch.dtype:
@@ -95,25 +135,27 @@ def main() -> None:
     output_dir = Path(train_cfg.get("output_dir", "outputs/qlora"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    training_args = TrainingArguments(
-        output_dir=str(output_dir),
-        num_train_epochs=train_cfg.get("num_train_epochs", 1),
-        per_device_train_batch_size=train_cfg.get("per_device_train_batch_size", 1),
-        per_device_eval_batch_size=train_cfg.get("per_device_eval_batch_size", 1),
-        gradient_accumulation_steps=train_cfg.get("gradient_accumulation_steps", 1),
-        learning_rate=train_cfg.get("learning_rate", 2e-4),
-        logging_steps=train_cfg.get("logging_steps", 10),
-        save_steps=train_cfg.get("save_steps", 100),
-        eval_steps=train_cfg.get("eval_steps", 100),
-        evaluation_strategy="steps" if eval_ds is not None else "no",
-        warmup_ratio=train_cfg.get("warmup_ratio", 0.03),
-        lr_scheduler_type=train_cfg.get("lr_scheduler_type", "cosine"),
-        bf16=train_cfg.get("bf16", True),
-        report_to=train_cfg.get("report_to", "none"),
-        seed=train_cfg.get("seed", 42),
-    )
+    eval_strategy_key = _resolve_eval_strategy_key()
+    training_kwargs = {
+        "output_dir": str(output_dir),
+        "num_train_epochs": train_cfg.get("num_train_epochs", 1),
+        "per_device_train_batch_size": train_cfg.get("per_device_train_batch_size", 1),
+        "per_device_eval_batch_size": train_cfg.get("per_device_eval_batch_size", 1),
+        "gradient_accumulation_steps": train_cfg.get("gradient_accumulation_steps", 1),
+        "learning_rate": train_cfg.get("learning_rate", 2e-4),
+        "logging_steps": train_cfg.get("logging_steps", 10),
+        "save_steps": train_cfg.get("save_steps", 100),
+        "eval_steps": train_cfg.get("eval_steps", 100),
+        eval_strategy_key: "steps" if eval_ds is not None else "no",
+        "warmup_ratio": train_cfg.get("warmup_ratio", 0.03),
+        "lr_scheduler_type": train_cfg.get("lr_scheduler_type", "cosine"),
+        "bf16": train_cfg.get("bf16", True),
+        "report_to": train_cfg.get("report_to", "none"),
+        "seed": train_cfg.get("seed", 42),
+    }
+    training_args = TrainingArguments(**training_kwargs)
 
-    trainer = SFTTrainer(
+    trainer = build_sft_trainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=train_ds,
