@@ -20,6 +20,7 @@ model:
   do_sample: true
   tensor_parallel_size: null  # null => use len(experiment.gpu_ids)
   gpu_memory_utilization: 0.8
+  vllm_batch_size: 16
 
 minif2f:
   source_type: local_json
