@@ -1,11 +1,10 @@
-torch>=2.0.0
-transformers==4.57.1
+# NOTE:
+# vLLM (and its CUDA-matched torch stack) should be installed by user beforehand.
+# To reduce compatibility conflicts, do not pin vLLM-managed core deps here
+# (e.g. torch/transformers/huggingface_hub/vllm).
 accelerate>=0.27.0
 datasets>=2.14.0
-huggingface_hub>=0.20.0
-tqdm>=4.65.0
 regex>=2023.10.3
-pyyaml>=6.0
 openai>=1.0.0
 lean-interact>=0.9.0
 hf-transfer
