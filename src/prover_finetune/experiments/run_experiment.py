@@ -275,6 +275,15 @@ def _process_one_problem(
         _append(logs, f"FAILED - sample id={sample_id} after {pass_k} attempts.")
         _append(logs, "=" * 80)
 
+    attempts_used = len(candidates)
+    _append(
+        logs,
+        (
+            f"SAMPLE SUMMARY: attempts={attempts_used}/{pass_k} | "
+            f"gen_ms(total)={total_generation_ms:.1f} | verify_ms(total)={total_verify_ms:.1f}"
+        ),
+    )
+
     result = {
         "row_idx": row_idx,
         "id": sample_id,
@@ -285,6 +294,7 @@ def _process_one_problem(
         "prediction_lean_code": first_prediction_lean_code,
         "extraction_mode": first_extraction_mode,
         "lean_output": lean_log,
+        "attempts_used": attempts_used,
         "generation_ms_total": total_generation_ms,
         "verify_ms_total": total_verify_ms,
         "pass_k": pass_k,
@@ -347,12 +357,14 @@ def _run_worker(
             total = progress_state["total"]
             status = "PASS" if ok_int else "FAIL"
             logger.info(
-                "[progress] %d/%d | gpu=%s | sample=%s | %s | gen_ms(total)=%.1f | verify_ms(total)=%.1f",
+                "[progress] %d/%d | gpu=%s | sample=%s | %s | attempts=%d/%d | gen_ms(total)=%.1f | verify_ms(total)=%.1f",
                 done,
                 total,
                 gpu_id,
                 result["id"],
                 status,
+                int(result.get("attempts_used", 0)),
+                int(result.get("pass_k", pass_k)),
                 float(result.get("generation_ms_total", 0.0)),
                 float(result.get("verify_ms_total", 0.0)),
             )
