@@ -66,8 +66,32 @@ def main():
     # We expect clear speedup from 4-way parallel verify.
     assert elapsed < 0.7, f"Parallel verify did not speed up enough: elapsed={elapsed:.3f}s"
     assert len(packed) == len(dataset)
-    passed = sum(ok for _, _, ok in packed)
-    assert passed == 4, f"Expected 4 successful checks, got {passed}"
+
+    expected_ok_by_id = {
+        "s1": True,
+        "s2": False,
+        "s3": True,
+        "s4": False,
+        "s5": True,
+        "s6": False,
+        "s7": True,
+        "s8": False,
+    }
+    result_by_id = {result["id"]: result for _, result, _ in packed}
+    for sample_id, expected_ok in expected_ok_by_id.items():
+        assert sample_id in result_by_id, f"Missing result for sample_id={sample_id}"
+        item = result_by_id[sample_id]
+        assert item["ok"] is expected_ok, (
+            f"Unexpected verification status for {sample_id}: got={item['ok']} expected={expected_ok}"
+        )
+        assert int(item["attempts_used"]) == 1, f"Expected single attempt for {sample_id}"
+        assert len(item["candidates"]) == 1, f"Expected exactly one candidate for {sample_id}"
+        cand = item["candidates"][0]
+        assert cand["ok"] is expected_ok, f"Candidate ok mismatch for {sample_id}"
+        assert isinstance(cand.get("lean_output", ""), str) and cand.get("lean_output", "") != ""
+
+    passed = sum(1 for sample_id, ok in expected_ok_by_id.items() if result_by_id[sample_id]["ok"] == ok)
+    assert passed == len(expected_ok_by_id), f"Expected all per-sample checks to pass, got {passed}"
     print(f"[PASS] parallel lean verification test, elapsed={elapsed:.3f}s")
 
 
