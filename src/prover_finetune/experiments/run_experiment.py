@@ -180,6 +180,14 @@ def _log_run_configuration(
     logger.info("Run configuration:\n%s", json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _log_stage(logger: logging.Logger, stage: str, **kwargs) -> None:
+    if kwargs:
+        detail = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+        logger.info("[stage] %s | %s", stage, detail)
+    else:
+        logger.info("[stage] %s", stage)
+
+
 def _process_one_problem(
     row_idx: int,
     total_rows: int,
@@ -357,15 +365,25 @@ def _run_vllm_batch_mode(
         lean_parallel_workers,
         batch_size,
     )
+    _log_stage(
+        logger,
+        "vllm_batch_mode_init",
+        batch_size=batch_size,
+        lean_parallel_workers=lean_parallel_workers,
+        dataset_size=len(dataset),
+        pass_k=pass_k,
+    )
 
     checker = None
     verify_executor = None
     verify_callable = verify_fn
     if verify_callable is None:
         if lean_parallel_workers <= 1:
+            _log_stage(logger, "lean_checker_init_single")
             checker = LeanChecker(copy.deepcopy(lean_cfg))
             checker.setup_project()
         else:
+            _log_stage(logger, "lean_checker_init_pool", workers=lean_parallel_workers)
             verify_executor = concurrent.futures.ProcessPoolExecutor(
                 max_workers=lean_parallel_workers,
                 initializer=_init_parallel_lean_checker,
@@ -421,6 +439,15 @@ def _run_vllm_batch_mode(
             next_pending = []
             for chunk_start in range(0, len(pending), batch_size):
                 chunk = pending[chunk_start : chunk_start + batch_size]
+                chunk_ids = [states[i]["id"] for i in chunk]
+                _log_stage(
+                    logger,
+                    "vllm_chunk_start",
+                    attempt=attempt,
+                    chunk_start=chunk_start,
+                    chunk_size=len(chunk),
+                    chunk_ids="|".join(chunk_ids),
+                )
                 statements = [states[i]["theorem"] for i in chunk]
                 gen_start = time.perf_counter()
                 try:
@@ -465,6 +492,13 @@ def _run_vllm_batch_mode(
                         else:
                             next_pending.append(state_idx)
                     continue
+                except Exception:
+                    logger.exception(
+                        "Unexpected exception during vLLM generation batch. attempt=%d chunk_ids=%s",
+                        attempt,
+                        chunk_ids,
+                    )
+                    raise
 
                 batch_elapsed_ms = (time.perf_counter() - gen_start) * 1000
                 per_sample_gen_ms = batch_elapsed_ms / max(1, len(chunk))
@@ -503,9 +537,25 @@ def _run_vllm_batch_mode(
                 verify_start = time.perf_counter()
                 verify_payloads = [(states[i]["theorem"], extracted) for i, _, extracted, _, _ in prepared]
                 if verify_executor is not None and verify_callable is not None:
-                    verify_results = list(verify_executor.map(verify_callable, verify_payloads))
+                    try:
+                        verify_results = list(verify_executor.map(verify_callable, verify_payloads))
+                    except Exception:
+                        logger.exception(
+                            "Unexpected exception in parallel Lean verification. attempt=%d chunk_ids=%s",
+                            attempt,
+                            chunk_ids,
+                        )
+                        raise
                 elif verify_callable is not None:
-                    verify_results = [verify_callable(payload) for payload in verify_payloads]
+                    try:
+                        verify_results = [verify_callable(payload) for payload in verify_payloads]
+                    except Exception:
+                        logger.exception(
+                            "Unexpected exception in custom verify function. attempt=%d chunk_ids=%s",
+                            attempt,
+                            chunk_ids,
+                        )
+                        raise
                 else:
                     verify_results = [checker.check_proof(theorem, extracted) for theorem, extracted in verify_payloads]
                 verify_elapsed_ms = (time.perf_counter() - verify_start) * 1000
@@ -697,12 +747,14 @@ def main() -> None:
     lean_cfg = cfg.section("lean")
     verbose_logging = bool(exp_cfg.get("verbose_logging", True))
     logger = _setup_logger(verbose_logging)
+    _log_stage(logger, "config_loaded", config_path=args.config)
 
     split = exp_cfg.get("split", "valid")
     max_samples = exp_cfg.get("max_samples")
     output_dir = Path(exp_cfg.get("output_dir", "outputs/experiments/default"))
     output_dir.mkdir(parents=True, exist_ok=True)
     _attach_file_logger(logger, output_dir)
+    _log_stage(logger, "output_dir_ready", output_dir=str(output_dir.resolve()))
     _log_run_configuration(logger, exp_cfg, model_cfg, minif2f_cfg, lean_cfg)
     # Suppress model loading/download progress bars in multi-thread mode.
     os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -720,6 +772,7 @@ def main() -> None:
         pass
 
     dataset = load_minif2f(minif2f_cfg, split=split, max_samples=max_samples)
+    _log_stage(logger, "dataset_loaded", split=split, max_samples=max_samples, dataset_size=len(dataset))
     pass_k = int(exp_cfg.get("pass_k", 1))
     total_rows = len(dataset)
     if total_rows == 0:
@@ -738,6 +791,7 @@ def main() -> None:
     problem_log_dir = output_dir / "problem_logs"
     problem_log_dir.mkdir(parents=True, exist_ok=True)
     gpu_ids = _discover_gpu_ids(exp_cfg, model_cfg, logger)
+    _log_stage(logger, "gpu_ids_discovered", gpu_ids=gpu_ids)
     use_vllm = bool(model_cfg.get("use_vllm", True))
     if use_vllm:
         # vLLM manages intra-engine parallelism itself via tensor parallel.
@@ -753,6 +807,13 @@ def main() -> None:
             int(model_cfg["tensor_parallel_size"]),
             worker_count,
         )
+        _log_stage(
+            logger,
+            "vllm_mode_configured",
+            cuda_visible_devices=os.environ["CUDA_VISIBLE_DEVICES"],
+            tensor_parallel_size=int(model_cfg["tensor_parallel_size"]),
+            worker_count=worker_count,
+        )
     else:
         worker_count = min(len(gpu_ids), total_rows)
         gpu_ids = gpu_ids[:worker_count]
@@ -762,14 +823,18 @@ def main() -> None:
             total_rows,
             pass_k,
         )
-        packed_results = _run_vllm_batch_mode(
-            dataset=dataset,
-            pass_k=pass_k,
-            model_cfg=model_cfg,
-            lean_cfg=lean_cfg,
-            problem_log_dir=problem_log_dir,
-            logger=logger,
-        )
+        try:
+            packed_results = _run_vllm_batch_mode(
+                dataset=dataset,
+                pass_k=pass_k,
+                model_cfg=model_cfg,
+                lean_cfg=lean_cfg,
+                problem_log_dir=problem_log_dir,
+                logger=logger,
+            )
+        except Exception:
+            logger.exception("Fatal error in vLLM batch mode.")
+            raise
     else:
         indexed_rows = list(enumerate(dataset, start=1))
         task_queue: "queue.Queue[tuple[int, dict]]" = queue.Queue()
@@ -785,26 +850,30 @@ def main() -> None:
             worker_count,
             gpu_ids,
         )
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [
-                executor.submit(
-                    _run_worker,
-                    worker_idx=i,
-                    gpu_id=gpu_ids[i],
-                    task_queue=task_queue,
-                    total_rows=total_rows,
-                    pass_k=pass_k,
-                    model_cfg=model_cfg,
-                    lean_cfg=lean_cfg,
-                    problem_log_dir=problem_log_dir,
-                    logger=logger,
-                    load_state=load_state,
-                    progress_state=progress_state,
-                )
-                for i in range(worker_count)
-            ]
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
-                packed_results.extend(future.result())
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(
+                        _run_worker,
+                        worker_idx=i,
+                        gpu_id=gpu_ids[i],
+                        task_queue=task_queue,
+                        total_rows=total_rows,
+                        pass_k=pass_k,
+                        model_cfg=model_cfg,
+                        lean_cfg=lean_cfg,
+                        problem_log_dir=problem_log_dir,
+                        logger=logger,
+                        load_state=load_state,
+                        progress_state=progress_state,
+                    )
+                    for i in range(worker_count)
+                ]
+                for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="workers"):
+                    packed_results.extend(future.result())
+        except Exception:
+            logger.exception("Fatal error in legacy threaded worker mode.")
+            raise
 
     packed_results.sort(key=lambda x: x[0])
     results = [item[1] for item in packed_results]
