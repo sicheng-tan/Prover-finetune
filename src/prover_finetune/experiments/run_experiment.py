@@ -360,6 +360,11 @@ def _run_vllm_batch_mode(
     prover = prover_override or build_prover_generator(model_cfg)
     batch_size = max(1, int(model_cfg.get("vllm_batch_size", 16)))
     lean_parallel_workers = _resolve_lean_parallel_workers(model_cfg, lean_cfg)
+    dump_generated_debug = bool(model_cfg.get("dump_generated_lean_debug", True))
+    generated_debug_dir = problem_log_dir.parent / "generated_lean_debug"
+    if dump_generated_debug:
+        generated_debug_dir.mkdir(parents=True, exist_ok=True)
+        _log_stage(logger, "generated_lean_debug_enabled", path=str(generated_debug_dir.resolve()))
     logger.info(
         "Lean verification parallel workers=%d (batch_size=%d).",
         lean_parallel_workers,
@@ -491,6 +496,11 @@ def _run_vllm_batch_mode(
                             done_count += 1
                         else:
                             next_pending.append(state_idx)
+                        if dump_generated_debug:
+                            sample_id = state["id"]
+                            safe_sample_id = str(sample_id).replace("/", "_")
+                            timeout_path = generated_debug_dir / f"{safe_sample_id}.attempt_{attempt}.timeout.txt"
+                            timeout_path.write_text(timeout_log + "\n", encoding="utf-8")
                     continue
                 except Exception:
                     logger.exception(
@@ -532,6 +542,10 @@ def _run_vllm_batch_mode(
                     _append(state["logs"], "=" * 80)
                     _append(state["logs"], f"ATTEMPT {attempt}/{pass_k} - LEAN VERIFICATION")
                     _append(state["logs"], "-" * 80)
+                    if dump_generated_debug:
+                        safe_sample_id = str(state["id"]).replace("/", "_")
+                        out_path = generated_debug_dir / f"{safe_sample_id}.attempt_{attempt}.lean"
+                        out_path.write_text(extracted_proof + "\n", encoding="utf-8")
                     prepared.append((state_idx, pred_proof, extracted_proof, extraction_mode, retries_used))
 
                 verify_start = time.perf_counter()
