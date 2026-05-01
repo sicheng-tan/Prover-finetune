@@ -18,8 +18,14 @@ class MockProver:
         del num_samples
         outputs = []
         for stmt in statements:
-            if "bad_" in stmt:
+            if "bad_ring" in stmt:
                 outputs.append(["by\n  sorry"])
+            elif "good_ring" in stmt:
+                outputs.append(["by\n  ring"])
+            elif "good_linarith" in stmt:
+                outputs.append(["by\n  linarith"])
+            elif "bad_nlinarith" in stmt:
+                outputs.append(["by\n  nlinarith"])
             else:
                 outputs.append(["by\n  trivial"])
         return outputs
@@ -34,10 +40,11 @@ def main():
 
     # Exactly k=4 samples as requested.
     dataset = [
-        {"id": "p1", "statement": "theorem good_1 : True :="},
-        {"id": "p2", "statement": "theorem bad_1 : True :="},
-        {"id": "p3", "statement": "theorem good_2 : True :="},
-        {"id": "p4", "statement": "theorem bad_2 : True :="},
+        # Explicitly Mathlib-dependent tactics (ring/linarith/nlinarith).
+        {"id": "p1", "statement": "theorem good_ring (x y : ℚ) : (x + y)^2 = x^2 + 2*x*y + y^2 :="},
+        {"id": "p2", "statement": "theorem bad_ring (x y : ℚ) : (x + y)^2 = x^2 + y^2 :="},
+        {"id": "p3", "statement": "theorem good_linarith (a b : ℚ) (h1 : a ≤ b) : a - b ≤ 0 :="},
+        {"id": "p4", "statement": "theorem bad_nlinarith (x : ℚ) (h : x^2 = 2) : False :="},
     ]
     model_cfg = {
         "vllm_batch_size": 4,
