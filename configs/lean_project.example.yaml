@@ -18,6 +18,8 @@ use_lean_interact: true
 use_auto_server: true
 memory_limit_mb: 16384
 lean_interact_verbose: true
+warmup_on_init: true
+warmup_timeout_sec: 180
 
 # Header used in Main.lean for proof checking.
 header_imports:

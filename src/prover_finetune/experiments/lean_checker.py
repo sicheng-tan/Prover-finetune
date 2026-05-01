@@ -37,6 +37,8 @@ class LeanChecker:
         self.use_lean_interact = bool(merged_cfg.get("use_lean_interact", True))
         self.memory_limit_mb = merged_cfg.get("memory_limit_mb")
         self.lean_interact_verbose = bool(merged_cfg.get("lean_interact_verbose", False))
+        self.warmup_on_init = bool(merged_cfg.get("warmup_on_init", True))
+        self.warmup_timeout_sec = int(merged_cfg.get("warmup_timeout_sec", max(60, self.timeout_sec)))
         self._lean_server = None
 
     def setup_project(self) -> None:
@@ -50,6 +52,8 @@ class LeanChecker:
             self.lean_version = toolchain_file.read_text(encoding="utf-8").strip().replace(
                 "leanprover/lean4:", ""
             )
+        if self.warmup_on_init:
+            self._warmup_lean_server()
 
     def _build_check_content(self, theorem_block: str, proof: str) -> str:
         imports_block = "\n".join(f"import {name}" for name in self.header_imports)
@@ -157,6 +161,20 @@ class LeanChecker:
             return ok, "\n".join(output_lines)
         except Exception as exc:
             return False, f"lean-interact verification error: {exc}"
+
+    def _warmup_lean_server(self) -> None:
+        """Best-effort warmup to reduce first-check cold start latency."""
+        if not self._init_lean_interact_server():
+            return
+        warmup_content = "import Mathlib\n\ntheorem warmup_true : True := by\n  trivial\n"
+        try:
+            self._lean_server.run(
+                Command(cmd=warmup_content),
+                timeout=self.warmup_timeout_sec if self.warmup_timeout_sec > 0 else None,
+            )
+        except Exception:
+            # Do not block experiment startup on warmup failure.
+            pass
 
     def check_proof(self, theorem_block: str, proof: str) -> tuple[bool, str]:
         content = self._build_check_content(theorem_block, proof)

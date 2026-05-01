@@ -138,6 +138,7 @@ python scripts/extract_minif2f_lean_to_json.py
 - Lean 版本：`lean_version`（默认 `v4.27.0`；若 `mathlib_path/lean-toolchain` 存在会自动读取该版本）
 - 运行时：`timeout_sec`
 - lean-interact 模式：`use_lean_interact`、`use_auto_server`、`memory_limit_mb`
+- 预热参数：`warmup_on_init`（默认 true）、`warmup_timeout_sec`（示例配置为 180；未设置时默认 `max(60, timeout_sec)`）
 - 校验头部：`header_imports`、`header_set_options`、`header_open_scopes`
 
 ### 4) 运行实验
