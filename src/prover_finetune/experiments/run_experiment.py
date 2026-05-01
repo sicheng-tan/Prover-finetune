@@ -265,6 +265,10 @@ def _process_one_problem(
         _append(logs, "=" * 80)
         _append(logs, f"ATTEMPT {idx}/{pass_k} - LEAN VERIFICATION")
         _append(logs, "-" * 80)
+        lean_input_content = checker.render_check_content(theorem_block, extracted_proof)
+        _append(logs, "LEAN INPUT CONTENT:")
+        _append(logs, lean_input_content)
+        _append(logs, "-" * 80)
         verify_start = time.perf_counter()
         cur_ok, cur_log = checker.check_proof(theorem_block, extracted_proof)
         verify_ms = (time.perf_counter() - verify_start) * 1000
@@ -375,6 +379,7 @@ def _run_vllm_batch_mode(
     elif lean_parallel_workers > 1:
         # For injected verify function (tests/mocks), use threads to parallelize.
         verify_executor = concurrent.futures.ThreadPoolExecutor(max_workers=lean_parallel_workers)
+    content_renderer = LeanChecker(copy.deepcopy(lean_cfg))
 
     states: list[dict] = []
     total_rows = len(dataset)
@@ -497,6 +502,10 @@ def _run_vllm_batch_mode(
                     _append(state["logs"], extracted_proof)
                     _append(state["logs"], "=" * 80)
                     _append(state["logs"], f"ATTEMPT {attempt}/{pass_k} - LEAN VERIFICATION")
+                    _append(state["logs"], "-" * 80)
+                    lean_input_content = content_renderer.render_check_content(state["theorem"], extracted_proof)
+                    _append(state["logs"], "LEAN INPUT CONTENT:")
+                    _append(state["logs"], lean_input_content)
                     _append(state["logs"], "-" * 80)
                     prepared.append((state_idx, pred_proof, extracted_proof, extraction_mode, retries_used))
 

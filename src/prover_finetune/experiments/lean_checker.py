@@ -158,7 +158,11 @@ class LeanChecker:
         except Exception as exc:
             return False, f"lean-interact verification error: {exc}"
 
+    def render_check_content(self, theorem_block: str, proof: str) -> str:
+        """Return the exact Lean content passed to lean-interact."""
+        return self._build_check_content(theorem_block, proof)
+
     def check_proof(self, theorem_block: str, proof: str) -> tuple[bool, str]:
-        content = self._build_check_content(theorem_block, proof)
+        content = self.render_check_content(theorem_block, proof)
         return self._check_with_lean_interact(content)
 
