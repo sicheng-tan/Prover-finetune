@@ -217,6 +217,56 @@ CUDA_VISIBLE_DEVICES=1 python -m src.prover_finetune.finetune.train_qlora --conf
 
 - `<output_dir>/adapter`
 
+### 3) 合并 QLoRA adapter 到基座模型（可部署模型）
+
+如果你要得到一个不依赖 `adapter_path` 的独立模型目录，需要执行一次合并：
+
+```bash
+python -m src.prover_finetune.finetune.merge_qlora_adapter \
+  --config configs/finetune.example.yaml
+```
+
+默认会从配置中的 `training.output_dir` 读取 `<output_dir>/adapter`，并输出到：
+
+- `<output_dir>/merged`
+
+也可以手动指定路径：
+
+```bash
+python -m src.prover_finetune.finetune.merge_qlora_adapter \
+  --base-model-path deepseek-ai/DeepSeek-Prover-V2-7B \
+  --adapter-path outputs/deepseek-prover-v2-7b-lora/adapter \
+  --output-path outputs/deepseek-prover-v2-7b-lora/merged \
+  --torch-dtype bfloat16
+```
+
+### 4) 使用合并后的模型
+
+在本项目的实验评测中，直接把 `model.name_or_path` 改成合并输出目录即可，`adapter_path` 保持 `null`：
+
+```yaml
+model:
+  name_or_path: outputs/deepseek-prover-v2-7b-lora/merged
+  adapter_path: null
+  model_type: deepseek_prover_v2
+```
+
+然后按原命令运行实验：
+
+```bash
+python -m src.prover_finetune.experiments.run_experiment --config configs/experiment.example.yaml
+```
+
+如果你在其他推理脚本中用 Hugging Face `transformers` 直接加载，也同样只需要指向 `merged` 目录：
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_path = "outputs/deepseek-prover-v2-7b-lora/merged"
+tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+```
+
 当 `formatter_type=deepseek_prover_v2` 时，训练样本会被格式化为：
 
 - 用户部分：给定 theorem 的 DeepSeek-Prover-V2 风格 prompt
