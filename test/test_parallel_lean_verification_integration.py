@@ -60,6 +60,12 @@ def main():
         default=8,
         help="vLLM batch size used by scheduler (with MockProver).",
     )
+    parser.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=180,
+        help="Lean verification timeout (seconds) for each check.",
+    )
     args = parser.parse_args()
 
     logger = logging.getLogger("parallel-lean-integration")
@@ -77,6 +83,7 @@ def main():
         "project_config_path": args.lean_project_config,
         "use_lean_interact": True,
         "use_auto_server": True,
+        "timeout_sec": int(args.timeout_sec),
     }
 
     with tempfile.TemporaryDirectory() as tmpdir:

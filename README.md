@@ -282,7 +282,8 @@ Lean 并行验证（集成测试）：
 python test/test_parallel_lean_verification_integration.py \
   --lean-project-config configs/lean_project.example.yaml \
   --parallel-workers 4 \
-  --batch-size 8
+  --batch-size 8 \
+  --timeout-sec 180
 ```
 
 说明：
