@@ -277,20 +277,17 @@ python test/test_data_formatting.py
 - `deepseek_prover_v2` 格式是否包含 `Proof plan` 与 `Lean 4 code`
 - `load_and_process_dataset` 是否正确产出 `text` 字段
 
-Lean 并行验证（集成测试）：
+Lean 并行验证测试（lean-interact，k=4）：
 
 ```bash
-python test/test_parallel_lean_verification_integration.py \
-  --lean-project-config configs/lean_project.example.yaml \
-  --parallel-workers 4 \
-  --batch-size 8 \
-  --timeout-sec 180
+python test/test_parallel_lean_verification.py
 ```
 
 说明：
 
-- 该测试使用 `MockProver`（不依赖真实 LLM），但校验阶段会真实调用 `lean-interact`。
-- 在 vLLM 调度路径中并行启动多个 LeanChecker 进程执行验证。
+- 该测试固定 `k=4` 个 Lean 证明样本。
+- 该测试使用 `MockProver`（不依赖真实 LLM），校验阶段会真实调用 `lean-interact`。
+- 测试会按当前并行逻辑启动多个 LeanChecker 进程执行验证。
 
 ---
 
