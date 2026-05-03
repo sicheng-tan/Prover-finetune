@@ -7,9 +7,9 @@ experiment:
   output_dir: outputs/experiments/minif2f-baseline
 
 model:
-  name_or_path: Qwen/Qwen2.5-Math-7B-Instruct
+  name_or_path: deepseek-ai/DeepSeek-Prover-V2-7B
   # auto | generic | deepseek_prover_v2
-  model_type: auto
+  model_type: deepseek_prover_v2
   adapter_path: null
   require_gpu: true
   use_vllm: true

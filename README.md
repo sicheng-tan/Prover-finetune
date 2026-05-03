@@ -50,9 +50,11 @@ src/prover_finetune/
 ```bash
 conda create -n prover-finetune python=3.10 -y
 conda activate prover-finetune
+# Install vLLM with CUDA 12.9.
+pip install vllm=="0.15.1" --extra-index-url https://download.pytorch.org/whl/cu129
 pip install -r requirements.txt
 ```
-
+> vllm最新版本有兼容性问题，这里选择0.15.1或0.16.0
 > 说明：`requirements.txt` 仅包含基础依赖，实际运行需有可用的 PyTorch/CUDA 环境（若进行 GPU 训练/推理）。
 
 ### 2) Lean / Lake 环境（手动）

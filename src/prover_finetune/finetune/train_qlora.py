@@ -123,6 +123,14 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="Path to finetune yaml config")
     args = parser.parse_args()
 
+    config_path = Path(args.config).resolve()
+    raw_config_text = config_path.read_text(encoding="utf-8")
+    print("=" * 80)
+    print(f"Finetune config file: {config_path}")
+    print("=" * 80)
+    print(raw_config_text)
+    print("=" * 80)
+
     cfg = FinetuneConfig.load(args.config)
     model_cfg = cfg.section("model")
     data_cfg = cfg.section("data")
