@@ -45,8 +45,8 @@ def get_pile(data="pileval", tokenizer=None, n_samples=512, block_size=512):
     dataset = dataset.shuffle(seed=42)
     samples = []
     n_run = 0
-    for data in dataset:
-        line = data["text"]
+    for row in dataset:
+        line = row["text"]
         line = line.strip()
         line_encoded = tokenizer.encode(line)
         if len(line_encoded) > 512:

@@ -88,6 +88,40 @@ def move_embed(model, device):
 def get_named_linears(module):
     return {name: m for name, m in module.named_modules() if isinstance(m, nn.Linear)}
 
+
+def _prepare_layer_forward_kwargs(model, inps: torch.Tensor, layer_kwargs: dict) -> dict:
+    """Rebuild RoPE tensors for each decoder layer forward.
+
+    Older FLRQ assumed cached ``position_embeddings`` from the Catcher could be reused
+    layer-by-layer. Recent ``transformers`` (Llama with GQA / explicit ``head_dim``)
+    can produce ``(cos, sin)`` that no longer match ``q_proj``'s viewed head dimension,
+    causing ``apply_rotary_pos_emb`` shape errors (e.g. 32 vs 128 on the last axis).
+    Recomputing from the current hidden states fixes this.
+    """
+    kwargs = {
+        k: v
+        for k, v in layer_kwargs.items()
+        if k not in ("position_embeddings", "past_key_values", "cache_position")
+    }
+    device = inps.device
+    batch, seq_len, _ = inps.shape
+    position_ids = torch.arange(seq_len, device=device, dtype=torch.long).unsqueeze(0).expand(
+        batch, -1
+    )
+    kwargs["position_ids"] = position_ids
+
+    if isinstance(model, (LlamaForCausalLM, Qwen2ForCausalLM)) and hasattr(
+        model.model, "rotary_emb"
+    ):
+        rot = model.model.rotary_emb.to(device)
+        kwargs["position_embeddings"] = rot(inps, position_ids=position_ids)
+
+    am = kwargs.get("attention_mask")
+    if am is not None and isinstance(am, torch.Tensor):
+        kwargs["attention_mask"] = am.to(device)
+    return kwargs
+
+
 @torch.no_grad()
 def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1, group_size = 128, info = False):    
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
@@ -185,7 +219,9 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
             )
         # # get output as next layer's input
 
-        inps  = layer(inps, **layer_kwargs)[0]
+        inps = inps.to(next(layer.parameters()).device)
+        fwd_kw = _prepare_layer_forward_kwargs(model, inps, layer_kwargs)
+        inps = layer(inps, **fwd_kw)[0]
         for h in handles:
             h.remove()
 
@@ -202,6 +238,9 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
         del input_feat,handles
         gc.collect()
         torch.cuda.empty_cache()
+
+    if hasattr(model.model, "rotary_emb"):
+        model.model.rotary_emb = model.model.rotary_emb.cpu()
 
     if model.__class__.__name__ in ("LlamaForCausalLM", "Qwen2ForCausalLM"):
         model.model.layers = nn.ModuleList(layers)

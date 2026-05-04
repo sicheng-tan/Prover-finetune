@@ -19,7 +19,7 @@ data:
   formal_statement_field: formal_statement
   reasoning_steps_field: reasoning_steps
   proof_field: formal_proof_no_comments
-  max_seq_length: 4096
+  max_seq_length: 4396
 
 training:
   output_dir: outputs/deepseek-prover-v2-7b-lora
