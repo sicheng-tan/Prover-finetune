@@ -135,12 +135,14 @@ def _prepare_layer_forward_kwargs(
     except ImportError:
         create_causal_mask = None
     if create_causal_mask is not None and isinstance(model, (LlamaForCausalLM, Qwen2ForCausalLM)):
-        # Signature varies by transformers version: `cache_position` is positional in some releases.
+        # SDPA mask path requires a real `cache_position` (not None) on some transformers versions.
+        cache_position = torch.arange(seq_len, device=device, dtype=torch.long)
+        # Signature varies: fourth positional is `cache_position`.
         causal = create_causal_mask(
             model.config,
             inp,
             None,
-            None,
+            cache_position,
             past_key_values=None,
             position_ids=position_ids,
         )
