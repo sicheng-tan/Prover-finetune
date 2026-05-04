@@ -89,7 +89,9 @@ def get_named_linears(module):
     return {name: m for name, m in module.named_modules() if isinstance(m, nn.Linear)}
 
 
-def _prepare_layer_forward_kwargs(model, inps: torch.Tensor, layer_kwargs: dict) -> dict:
+def _prepare_layer_forward_kwargs(
+    model, inps: torch.Tensor, layer_kwargs: dict
+) -> tuple[dict, torch.Tensor]:
     """Rebuild RoPE tensors for each decoder layer forward.
 
     Older FLRQ assumed cached ``position_embeddings`` from the Catcher could be reused
@@ -97,14 +99,25 @@ def _prepare_layer_forward_kwargs(model, inps: torch.Tensor, layer_kwargs: dict)
     can produce ``(cos, sin)`` that no longer match ``q_proj``'s viewed head dimension,
     causing ``apply_rotary_pos_emb`` shape errors (e.g. 32 vs 128 on the last axis).
     Recomputing from the current hidden states fixes this.
+
+    Some checkpoints pass decoder ``hidden_states`` as 2D ``[seq_len, hidden]`` (implicit
+    batch 1). We unsqueeze to ``[1, seq_len, hidden]`` for RoPE and the layer forward.
     """
     kwargs = {
         k: v
         for k, v in layer_kwargs.items()
         if k not in ("position_embeddings", "past_key_values", "cache_position")
     }
-    device = inps.device
-    batch, seq_len, _ = inps.shape
+    inp = inps
+    if inp.dim() == 2:
+        inp = inp.unsqueeze(0)
+    elif inp.dim() != 3:
+        raise ValueError(
+            f"Expected hidden_states of rank 2 or 3, got shape {tuple(inp.shape)} (rank {inp.dim()})"
+        )
+
+    device = inp.device
+    batch, seq_len, _ = inp.shape
     position_ids = torch.arange(seq_len, device=device, dtype=torch.long).unsqueeze(0).expand(
         batch, -1
     )
@@ -114,12 +127,12 @@ def _prepare_layer_forward_kwargs(model, inps: torch.Tensor, layer_kwargs: dict)
         model.model, "rotary_emb"
     ):
         rot = model.model.rotary_emb.to(device)
-        kwargs["position_embeddings"] = rot(inps, position_ids=position_ids)
+        kwargs["position_embeddings"] = rot(inp, position_ids=position_ids)
 
     am = kwargs.get("attention_mask")
     if am is not None and isinstance(am, torch.Tensor):
         kwargs["attention_mask"] = am.to(device)
-    return kwargs
+    return kwargs, inp
 
 
 @torch.no_grad()
@@ -184,6 +197,8 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
     del samples
     layers[0] = layers[0].module  # restore
     inps = inps[0]
+    if isinstance(inps, torch.Tensor) and inps.dim() == 2:
+        inps = inps.unsqueeze(0)
 
     layers[0] = layers[0].cpu()
     move_embed(model, "cpu")
@@ -220,8 +235,10 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
         # # get output as next layer's input
 
         inps = inps.to(next(layer.parameters()).device)
-        fwd_kw = _prepare_layer_forward_kwargs(model, inps, layer_kwargs)
-        inps = layer(inps, **fwd_kw)[0]
+        if inps.dim() == 2:
+            inps = inps.unsqueeze(0)
+        fwd_kw, inp_3d = _prepare_layer_forward_kwargs(model, inps, layer_kwargs)
+        inps = layer(inp_3d, **fwd_kw)[0]
         for h in handles:
             h.remove()
 
