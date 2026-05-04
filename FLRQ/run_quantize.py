@@ -135,9 +135,11 @@ def _prepare_layer_forward_kwargs(
     except ImportError:
         create_causal_mask = None
     if create_causal_mask is not None and isinstance(model, (LlamaForCausalLM, Qwen2ForCausalLM)):
+        # Signature varies by transformers version: `cache_position` is positional in some releases.
         causal = create_causal_mask(
             model.config,
             inp,
+            None,
             None,
             past_key_values=None,
             position_ids=position_ids,
