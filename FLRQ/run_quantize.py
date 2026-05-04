@@ -129,9 +129,29 @@ def _prepare_layer_forward_kwargs(
         rot = model.model.rotary_emb.to(device)
         kwargs["position_embeddings"] = rot(inp, position_ids=position_ids)
 
-    am = kwargs.get("attention_mask")
-    if am is not None and isinstance(am, torch.Tensor):
-        kwargs["attention_mask"] = am.to(device)
+    kwargs.pop("attention_mask", None)
+    try:
+        from transformers.masking_utils import create_causal_mask
+    except ImportError:
+        create_causal_mask = None
+    if create_causal_mask is not None and isinstance(model, (LlamaForCausalLM, Qwen2ForCausalLM)):
+        causal = create_causal_mask(
+            model.config,
+            inp,
+            None,
+            past_key_values=None,
+            position_ids=position_ids,
+        )
+        if causal is not None:
+            if isinstance(causal, torch.Tensor):
+                kwargs["attention_mask"] = causal.to(device)
+            else:
+                kwargs["attention_mask"] = causal
+    else:
+        am = layer_kwargs.get("attention_mask")
+        if am is not None and isinstance(am, torch.Tensor) and am.shape[0] == inp.shape[0]:
+            kwargs["attention_mask"] = am.to(device)
+
     return kwargs, inp
 
 
@@ -158,7 +178,7 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
         data="wikitext2", tokenizer=enc, n_samples=512, block_size=512
     )
     samples = torch.cat(samples, dim=0)
-
+    calib_batch, calib_seq = int(samples.shape[0]), int(samples.shape[1])
 
     layers = get_blocks(model)
 
@@ -198,7 +218,11 @@ def run_model_quant(model_path, output_path, qbit = 4, fix_rank = 0, ratio = 0.1
     layers[0] = layers[0].module  # restore
     inps = inps[0]
     if isinstance(inps, torch.Tensor) and inps.dim() == 2:
-        inps = inps.unsqueeze(0)
+        # Some modeling paths pass [batch*seq, hidden] instead of [batch, seq, hidden].
+        if inps.shape[0] == calib_batch * calib_seq:
+            inps = inps.view(calib_batch, calib_seq, -1)
+        else:
+            inps = inps.unsqueeze(0)
 
     layers[0] = layers[0].cpu()
     move_embed(model, "cpu")
