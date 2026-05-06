@@ -1,0 +1,30 @@
+# Dedicated environment for post-training quantization experiments.
+# Goal: keep this isolated from training/inference env to reduce dependency conflicts.
+#
+# Recommended Python: 3.10
+# Recommended install order:
+#   1) install torch (CUDA-matched) first
+#   2) install this requirements file
+#
+# Reference baseline:
+# https://huggingface.co/athanor-ai/DeepSeek-Prover-V2-7B-GPTQ-4bit
+# (torch 2.6.x + transformers 4.51.3 + auto-gptq 0.7.1 + peft<0.11)
+#
+# Example torch install (CUDA 12.9):
+#   pip install torch==2.9.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+
+accelerate==1.13.0
+datasets==2.21.0
+huggingface_hub==0.26.5
+numpy==1.26.4
+optimum==1.23.3
+peft==0.10.0
+protobuf==5.28.3
+safetensors==0.7.0
+sentencepiece==0.2.0
+tokenizers==0.21.0
+transformers==4.51.3
+
+# Quantization backends
+autoawq==0.2.9
+auto-gptq==0.7.1

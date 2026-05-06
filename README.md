@@ -57,6 +57,27 @@ pip install -r requirements.txt
 > vllm最新版本有兼容性问题，这里选择0.15.1或0.16.0
 > 说明：`requirements.txt` 仅包含基础依赖，实际运行需有可用的 PyTorch/CUDA 环境（若进行 GPU 训练/推理）。
 
+### 1.1) 量化专用隔离环境（AutoAWQ / AutoGPTQ）
+
+若你想做离线量化实验（避免影响当前训练/推理环境），建议使用单独环境，并安装本项目提供的量化依赖文件：`requirements.quantization.txt`。
+
+```bash
+conda create -n quantize-ptq python=3.10 -y
+conda activate quantize-ptq
+
+# 先安装与你 CUDA 匹配的 PyTorch（当前示例：CUDA 12.9）
+pip install torch==2.9.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+
+# 再安装量化依赖（AutoAWQ + AutoGPTQ）
+pip install -r requirements.quantization.txt
+```
+
+说明（按 `athanor-ai/DeepSeek-Prover-V2-7B-GPTQ-4bit` 参考栈对齐）：
+
+- 已固定关键版本：`transformers==4.51.3`、`auto-gptq==0.7.1`、`peft==0.10.0`（即 `<0.11`）、`accelerate==1.13.0`、`safetensors==0.7.0`。
+- 若加载 GPTQ 模型时报 `PEFT_TYPE_TO_MODEL_MAPPING` 相关错误，通常是 `peft>=0.11` 引起；请保持本文件中的 `peft` 版本。
+- AutoAWQ 已处于维护收敛状态；若目标是长期稳定部署，建议评估 `llmcompressor` 方案。
+
 ### 2) Lean / Lake 环境（手动）
 
 请确保系统可执行 `lake` 命令（通常通过 `elan` 安装 Lean 工具链后可用）。  

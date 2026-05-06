@@ -2,6 +2,11 @@
 # vLLM (and its CUDA-matched torch stack) should be installed by user beforehand.
 # To reduce compatibility conflicts, do not pin vLLM-managed core deps here
 # (e.g. torch/transformers/huggingface_hub/vllm).
+# Kept as comments for traceability (previous declarations):
+# torch>=2.0.0
+# transformers==4.57.1
+# huggingface_hub>=0.20.0
+# pyyaml>=6.0
 accelerate>=0.27.0
 datasets>=2.14.0
 regex>=2023.10.3
@@ -14,5 +19,7 @@ trl>=0.9.0
 
 # FLRQ/run_quantize.py: tqdm (progress); numpy (calib + r1_sketch); safetensors (imports).
 # torch / transformers still follow the NOTE above (vLLM or finetune stack).
+# Previous declaration (now intentionally unpinned in main stack):
+# tqdm>=4.65.0
 tqdm>=4.65.0
 numpy>=1.24.0

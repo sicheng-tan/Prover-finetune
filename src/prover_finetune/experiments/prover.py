@@ -27,6 +27,14 @@ def _resolve_tensor_parallel_size(model_cfg: dict) -> int:
     return max(1, int(value))
 
 
+def _resolve_vllm_quantization(model_cfg: dict) -> str | None:
+    value = model_cfg.get("vllm_quantization")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @contextmanager
 def _generation_timeout(timeout_sec: int | None):
     if timeout_sec is None or timeout_sec <= 0:
@@ -61,13 +69,20 @@ class ProverGenerator:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        llm_kwargs = {
+            "tokenizer": model_cfg["name_or_path"],
+            "trust_remote_code": bool(model_cfg.get("trust_remote_code", False)),
+            "tensor_parallel_size": _resolve_tensor_parallel_size(model_cfg),
+            "gpu_memory_utilization": float(model_cfg.get("gpu_memory_utilization", 0.9)),
+            "max_model_len": model_cfg.get("max_model_len"),
+        }
+        quantization = _resolve_vllm_quantization(model_cfg)
+        if quantization is not None:
+            llm_kwargs["quantization"] = quantization
+
         self.model = LLM(
             model_cfg["name_or_path"],
-            tokenizer=model_cfg["name_or_path"],
-            trust_remote_code=bool(model_cfg.get("trust_remote_code", False)),
-            tensor_parallel_size=_resolve_tensor_parallel_size(model_cfg),
-            gpu_memory_utilization=float(model_cfg.get("gpu_memory_utilization", 0.9)),
-            max_model_len=model_cfg.get("max_model_len"),
+            **llm_kwargs,
         )
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
         self.temperature = model_cfg.get("temperature", 0.2)
@@ -134,13 +149,20 @@ class DeepSeekProverV2Generator(ProverGenerator):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        llm_kwargs = {
+            "tokenizer": model_cfg["name_or_path"],
+            "trust_remote_code": True,
+            "tensor_parallel_size": _resolve_tensor_parallel_size(model_cfg),
+            "gpu_memory_utilization": float(model_cfg.get("gpu_memory_utilization", 0.9)),
+            "max_model_len": model_cfg.get("max_model_len"),
+        }
+        quantization = _resolve_vllm_quantization(model_cfg)
+        if quantization is not None:
+            llm_kwargs["quantization"] = quantization
+
         self.model = LLM(
             model_cfg["name_or_path"],
-            tokenizer=model_cfg["name_or_path"],
-            trust_remote_code=True,
-            tensor_parallel_size=_resolve_tensor_parallel_size(model_cfg),
-            gpu_memory_utilization=float(model_cfg.get("gpu_memory_utilization", 0.9)),
-            max_model_len=model_cfg.get("max_model_len"),
+            **llm_kwargs,
         )
         self.max_new_tokens = model_cfg.get("max_new_tokens", 256)
         self.temperature = model_cfg.get("temperature", 0.2)
