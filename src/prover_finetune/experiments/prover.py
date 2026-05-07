@@ -35,6 +35,14 @@ def _resolve_vllm_quantization(model_cfg: dict) -> str | None:
     return text or None
 
 
+def _resolve_vllm_dtype(model_cfg: dict) -> str | None:
+    value = model_cfg.get("vllm_dtype")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @contextmanager
 def _generation_timeout(timeout_sec: int | None):
     if timeout_sec is None or timeout_sec <= 0:
@@ -79,6 +87,9 @@ class ProverGenerator:
         quantization = _resolve_vllm_quantization(model_cfg)
         if quantization is not None:
             llm_kwargs["quantization"] = quantization
+        dtype = _resolve_vllm_dtype(model_cfg)
+        if dtype is not None:
+            llm_kwargs["dtype"] = dtype
 
         self.model = LLM(
             model_cfg["name_or_path"],
@@ -159,6 +170,9 @@ class DeepSeekProverV2Generator(ProverGenerator):
         quantization = _resolve_vllm_quantization(model_cfg)
         if quantization is not None:
             llm_kwargs["quantization"] = quantization
+        dtype = _resolve_vllm_dtype(model_cfg)
+        if dtype is not None:
+            llm_kwargs["dtype"] = dtype
 
         self.model = LLM(
             model_cfg["name_or_path"],

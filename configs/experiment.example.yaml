@@ -20,6 +20,7 @@ model:
   do_sample: false
   tensor_parallel_size: null  # null => use len(experiment.gpu_ids)
   vllm_quantization: null  # e.g. gptq_marlin / gptq_bitblas for GPTQ models
+  vllm_dtype: null  # e.g. float16 for GPTQ models (bfloat16 is not supported by some GPTQ backends)
   gpu_memory_utilization: 0.85
   vllm_batch_size: 16
   lean_parallel_workers: null  # null => min(vllm_batch_size, cpu_count)
